@@ -1,0 +1,37 @@
+{
+  "branding": {
+    "primaryColor": "#171717",
+    "secondaryColor": "#fafafa",
+    "fontFamily": "Cairo",
+    "heroTitle": "أناقة تتحدث عنك | أزياء QAAF الحصرية",
+    "heroSubtitle": "اكتشفي تشكيلتنا الفاخرة لعام 2026 المصنوعة يدوياً من أجود خامات القطن المصري والكتان الطبيعي لتناسب ذوقك الرفيع.",
+    "heroImage": "https://images.unsplash.com/photo-1483985988355-763728e1935b?q=80&w=2000",
+    "logoImage": "",
+    "aboutTitle": "حكاية QAAF للأزياء الفاخرة",
+    "aboutDescription": "قاف (QAAF) ليست مجرد علامة تجارية للملابس، بل هي رؤية مصرية تجمع بين الفخامة المعاصرة والأصالة. نحن نؤمن بأن ملابسك هي مرآة لشخصيتك، لذا نحرص على استخدام أفضل الأقمشة والقطن الطبيعي وتصميم قطع حصرية تمنحك الثقة والأناقة في كل مناسبة. كل قطعة صُممت وصُنعت بشغف وحب لتكون جزءاً من قصتك وتدوم معكِ للأبد.",
+    "aboutImage": "https://images.unsplash.com/photo-1441986300917-64674bd600d8?q=80&w=1200",
+    "slider": [
+      {
+        "id": "1",
+        "title": "مجموعة الصيف الراقية",
+        "image": "https://images.unsplash.com/photo-1490481651871-ab68de25d43d?q=80&w=1200"
+      },
+      {
+        "id": "2",
+        "title": "تصاميم كلاسيكية خالدة",
+        "image": "https://images.unsplash.com/photo-1469334031218-e382a71b716b?q=80&w=1200"
+      }
+    ],
+    "socialLinks": {
+      "facebook": "",
+      "instagram": "",
+      "whatsapp": "",
+      "tiktok": ""
+    },
+    "templateId": "qaaf-classic"
+  },
+  "products": [],
+  "orders": [],
+  "promoCodes": [],
+  "staff": []
+}
