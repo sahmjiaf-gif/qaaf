@@ -700,7 +700,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     try {
       // 2. Background tasks (stock deduction, staff assignment, CRM update)
-      const eligibleStaff = staffRef.current.filter(s => s.permissions.includes('orders'));
+      const eligibleStaff = staffRef.current.filter(s => Array.isArray(s.permissions) && s.permissions.includes('orders'));
       let finalOrder = { ...sanitizedOrder };
       
       if (eligibleStaff.length > 0) {

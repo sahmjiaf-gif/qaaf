@@ -8,6 +8,7 @@ import { getDatabase } from "firebase/database";
 const DEFAULT_CONFIG = {
   apiKey: "AIzaSyD0dJGyDBL7SE1Kh2C8PUFrtDFl4gfUmOw",
   authDomain: "qaaf-final.firebaseapp.com",
+  databaseURL: "https://qaaf-final-default-rtdb.firebaseio.com",
   projectId: "qaaf-final",
   storageBucket: "qaaf-final.firebasestorage.app",
   messagingSenderId: "699462717924",
@@ -29,5 +30,13 @@ const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 export const auth = getAuth(app);
 export const storage = getStorage(app);
-export const rdb = getDatabase(app);
+
+// Realtime Database — wrapped in try/catch to prevent blank page if databaseURL is missing/wrong
+let rdbInstance: ReturnType<typeof getDatabase> | null = null;
+try {
+  rdbInstance = getDatabase(app);
+} catch (e) {
+  console.warn('Realtime Database not available:', e);
+}
+export const rdb = rdbInstance as ReturnType<typeof getDatabase>;
 export default app;

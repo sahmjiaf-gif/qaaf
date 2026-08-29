@@ -78,10 +78,13 @@ const PermissionRoute: React.FC<{ permission: string; children: React.ReactNode 
   if (!isLoggedIn) return <Navigate to="/admin/login" replace />;
   // Full admin (not a staff login) → always allowed
   if (!currentStaff) return <>{children}</>;
+
+  const permissions = Array.isArray(currentStaff.permissions) ? currentStaff.permissions : [];
+
   // Staff member → check permission
-  if (currentStaff.permissions.includes(permission as any)) return <>{children}</>;
+  if (permissions.includes(permission as any)) return <>{children}</>;
   // No permission → redirect to first allowed page
-  const first = currentStaff.permissions[0];
+  const first = permissions[0];
   return <Navigate to={first ? `/admin/${first}` : '/admin/login'} replace />;
 };
 

@@ -188,7 +188,7 @@ const AdminLayout: React.FC<{ children: React.ReactNode, title: string, actions?
   ];
 
   const filteredMenuItems = currentStaff
-    ? menuItems.filter(item => currentStaff.permissions.includes(item.id as any))
+    ? menuItems.filter(item => Array.isArray(currentStaff.permissions) && currentStaff.permissions.includes(item.id as any))
     : menuItems;
 
   return (

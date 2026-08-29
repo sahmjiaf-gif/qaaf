@@ -158,12 +158,15 @@ const StaffManagement: React.FC = () => {
   };
 
   const togglePermission = (perm: Permission) => {
-    setFormData(prev => ({
-      ...prev,
-      permissions: prev.permissions.includes(perm)
-        ? prev.permissions.filter(p => p !== perm)
-        : [...prev.permissions, perm]
-    }));
+    setFormData(prev => {
+      const currentPermissions = Array.isArray(prev.permissions) ? prev.permissions : [];
+      return {
+        ...prev,
+        permissions: currentPermissions.includes(perm)
+          ? currentPermissions.filter(p => p !== perm)
+          : [...currentPermissions, perm]
+      };
+    });
   };
 
   const isMemberOnline = (member: StaffMember): boolean => {
