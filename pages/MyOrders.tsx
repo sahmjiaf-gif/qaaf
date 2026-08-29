@@ -22,7 +22,7 @@ const Logo = ({ className = "" }: { className?: string }) => {
     <div className={`flex flex-col items-center justify-center leading-none ${className}`} style={{ fontFamily: theme.fontFamily }}>
       <div className="relative">
         <Droplet className="text-yellow-400 fill-yellow-400 absolute -top-4 left-1/2 -translate-x-1/2" size={18} />
-        <h1 className="text-3xl font-bold tracking-tight text-black pt-1">QAAF</h1>
+        <h1 className="text-3xl font-bold tracking-tight text-black pt-1">قاف</h1>
       </div>
       <span className="text-[7px] font-bold tracking-[0.3em] text-gray-400 mt-1 uppercase">{t.evidenceBased}</span>
     </div>

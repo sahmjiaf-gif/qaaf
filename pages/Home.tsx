@@ -70,7 +70,7 @@ const Logo = ({ className = "", variant = "auto" }: { className?: string, varian
               fontWeight: 400,
               color: '#f3efe9',
             }}>
-              {branding?.logoTitle || 'QAAF'}
+              {branding?.logoTitle || 'قاف'}
             </div>
             <div style={{
               fontFamily: 'Amiri, serif',
@@ -788,7 +788,7 @@ const Home: React.FC = () => {
               <div className="w-12 h-1 bg-amber-600 animate-pulse rounded-full" />
             </div>
             <div className="pt-12 text-[10px] font-bold text-gray-400 tracking-[0.4em] uppercase">
-              © {new Date().getFullYear()} {branding?.logoTitle || 'QAAF'} WORLDWIDE
+              © {new Date().getFullYear()} {branding?.logoTitle || 'قاف'} WORLDWIDE
             </div>
           </div>
         </div>
@@ -1293,7 +1293,7 @@ const Home: React.FC = () => {
           </div>
 
           <div className="text-center md:text-right space-y-4 md:space-y-5">
-            <p className="text-[9px] md:text-[10px] font-bold text-gray-300 tracking-[0.32em] uppercase">© {new Date().getFullYear()} {branding?.logoTitle || 'QAAF'} WORLDWIDE. ALL RIGHTS RESERVED.</p>
+            <p className="text-[9px] md:text-[10px] font-bold text-gray-300 tracking-[0.32em] uppercase">© {new Date().getFullYear()} {branding?.logoTitle || 'قاف'} WORLDWIDE. ALL RIGHTS RESERVED.</p>
             <div className="pt-3 md:pt-4 border-t border-black inline-block">
               <Link
                 to="/admin/login"

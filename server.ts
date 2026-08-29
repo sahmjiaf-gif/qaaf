@@ -15,6 +15,19 @@ import { doc, onSnapshot, setDoc, updateDoc, collection, query, where, getDoc, g
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Guard against asynchronous process crashes (e.g. Windows file locking EBUSY on WhatsApp logout)
+process.on('uncaughtException', (err: any) => {
+  if (err?.code === 'EBUSY' || err?.message?.includes('.wwebjs_auth') || err?.message?.includes('unlink')) {
+    console.warn('⚠️ Handled async file lock error (wwebjs_auth/EBUSY):', err.message);
+    return;
+  }
+  console.error('⚠️ Uncaught Exception:', err);
+});
+
+process.on('unhandledRejection', (reason: any) => {
+  console.error('⚠️ Unhandled Promise Rejection:', reason);
+});
+
 const DB_FILE = path.join(__dirname, "db.json");
 
 // Initial state

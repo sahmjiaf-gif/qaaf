@@ -1,7 +1,8 @@
 import React, { useEffect } from 'react';
 import { useApp } from '../state';
-import { db } from '../firebase';
+import { db, rdb } from '../firebase';
 import { doc, updateDoc, getDoc } from 'firebase/firestore';
+import { ref as rdbRef, set as rdbSet, onDisconnect as rdbOnDisconnect } from 'firebase/database';
 
 export const GlobalPresenceManager: React.FC = () => {
   const { currentStaff } = useApp();
@@ -10,6 +11,7 @@ export const GlobalPresenceManager: React.FC = () => {
     if (!currentStaff) return;
 
     const staffRef = doc(db, 'staff', currentStaff.id);
+    const presenceRef = rdbRef(rdb, `presence/${currentStaff.id}`);
 
     const getTodayKey = () => {
       const d = new Date();
@@ -25,18 +27,31 @@ export const GlobalPresenceManager: React.FC = () => {
     // ─── INSTANT mark online/offline ─────────────────────────────────
     const markOnline = () => {
       lastMarkedOnline = true;
+      const now = new Date().toISOString();
+      // RTDB presence update (fast, reliable with onDisconnect)
+      try {
+        rdbSet(presenceRef, { isOnline: true, lastActive: now, userAgent: navigator.userAgent });
+        // ensure onDisconnect flips the flag
+        rdbOnDisconnect(presenceRef).set({ isOnline: false, lastActive: now }).catch(() => {});
+      } catch (e) {
+        // fallback to Firestore if RTDB fails
+      }
       updateDoc(staffRef, {
         isOnline: true,
-        lastActive: new Date().toISOString()
+        lastActive: now
       }).catch(console.error);
     };
 
     const markOffline = () => {
       if (!lastMarkedOnline) return; // Avoid redundant offline pings to save Firestore quota
       lastMarkedOnline = false;
+      const now = new Date().toISOString();
+      try {
+        rdbSet(presenceRef, { isOnline: false, lastActive: now, userAgent: navigator.userAgent });
+      } catch (e) {}
       updateDoc(staffRef, {
         isOnline: false,
-        lastActive: new Date().toISOString()
+        lastActive: now
       }).catch(console.error);
     };
 

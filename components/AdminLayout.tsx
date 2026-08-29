@@ -308,10 +308,23 @@ const AdminLayout: React.FC<{ children: React.ReactNode, title: string, actions?
               <Home size={14} />
               <span className="hidden sm:inline">{t.home}</span>
             </button>
-            <span className="text-[10px] font-bold px-2 py-1.5 rounded-full flex items-center gap-1 bg-green-50 text-green-600 truncate" title={t.connected}>
-              <Wifi size={12} className="shrink-0" />
-              <span className="hidden sm:inline">{t.connected}</span>
-            </span>
+            {/* Firestore sync status */}
+            {(() => {
+              const { firestoreOk, lastRemoteUpdate, lastWriteError } = useApp();
+              return (
+                <div className="flex items-center gap-2">
+                  <span className={`text-[10px] font-bold px-2 py-1.5 rounded-full flex items-center gap-1 ${firestoreOk ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'} truncate`} title={lastRemoteUpdate ? `آخر تحديث: ${new Date(lastRemoteUpdate).toLocaleString()}` : (firestoreOk ? 'متصل' : 'غير متصل')}>
+                    {firestoreOk ? <Wifi size={12} className="shrink-0" /> : <WifiOff size={12} className="shrink-0" />}
+                    <span className="hidden sm:inline">{firestoreOk ? 'متزامن' : 'غير متزامن'}</span>
+                  </span>
+                  {lastWriteError && (
+                    <button onClick={() => alert(lastWriteError)} className="text-[10px] font-bold px-2 py-1.5 rounded-full bg-red-100 text-red-700">
+                      عرض خطأ الحفظ
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         </header>
         <div className="p-4 lg:p-8">

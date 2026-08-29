@@ -15,7 +15,8 @@ import {
   orderBy, 
   limit, 
   getDoc,
-  where
+  where,
+  arrayUnion
 } from 'firebase/firestore';
 import { THEMES } from './themes';
 import { translations as defaultTranslations } from './translations';
@@ -25,6 +26,8 @@ import dbData from './db.json';
 interface AppContextType {
   branding: BrandingConfig;
   setBranding: (config: BrandingConfig) => void;
+  firestoreOk: boolean;
+  lastRemoteUpdate: string | null;
   orders: Order[];
   setOrders: React.Dispatch<React.SetStateAction<Order[]>>;
   addOrder: (order: Order) => Promise<void>;
@@ -194,14 +197,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return saved ? { ...defaultBranding, ...dbData.branding, ...JSON.parse(saved) } : { ...defaultBranding, ...dbData.branding };
     } catch { return { ...defaultBranding, ...dbData.branding }; }
   });
-  const [products, setProductsState] = useState<Product[]>(() => {
-    try {
-      localStorage.removeItem('qaaf_products_cache');
-      localStorage.removeItem('noure_products_cache');
-      const saved = localStorage.getItem('qaaf_products_cache');
-      return saved ? JSON.parse(saved) : (dbData.products || []);
-    } catch { return dbData.products || []; }
-  });
+  const [firestoreOk, setFirestoreOk] = useState<boolean>(true);
+  const [lastRemoteUpdate, setLastRemoteUpdate] = useState<string | null>(null);
+  const [lastWriteError, setLastWriteError] = useState<string | null>(null);
+  // Bug fix: start empty — let Firebase onSnapshot populate products.
+  // Starting from db.json or stale localStorage caused products to flash old data.
+  const [products, setProductsState] = useState<Product[]>([]);
   const [orders, setOrdersState] = useState<Order[]>([]);
   const [promoCodes, setPromoCodesState] = useState<PromoCode[]>([]);
   const [staff, setStaffState] = useState<StaffMember[]>([]);
@@ -362,73 +363,67 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     const fetchData = async () => {
       try {
+        // 1. Initial fetch of products from Firestore
         const prodSnap = await getDocs(collection(db, 'products'));
+        const prods = prodSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
+        setProductsState(prods);
+        try { localStorage.setItem('qaaf_products_cache', JSON.stringify(prods)); } catch {}
+
+        // 2. Initial fetch of orders & branding
         const orderSnap = await getDocs(collection(db, 'orders'));
         const brandSnap = await getDoc(doc(db, 'branding', 'main'));
         
         const ordersData = orderSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Order));
-        const brandingData = brandSnap.exists() ? brandSnap.data() as BrandingConfig : {} as BrandingConfig;
-
-        // Auto-sync total orders counter with existing delivered orders 
-        // (Ensures it picks up past orders, but doesn't drop if orders are auto-wiped)
-        const actualDeliveredCount = ordersData.filter(o => o.status === 'delivered').length;
-        if ((brandingData.totalOrdersCount || 0) < actualDeliveredCount) {
-          brandingData.totalOrdersCount = actualDeliveredCount;
-          await updateDoc(doc(db, 'branding', 'main'), { totalOrdersCount: actualDeliveredCount });
-        }
-
         setOrdersState(ordersData);
 
-        if (!prodSnap.empty) {
-          const prods = prodSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
-          setProductsState(prods);
-          localStorage.setItem('qaaf_products_cache', JSON.stringify(prods));
-        }
-        
         if (brandSnap.exists()) {
-          const config = brandSnap.data();
-          setBrandingState(prev => ({ ...prev, ...config }));
-          localStorage.setItem('qaaf_branding_cache', JSON.stringify({ ...defaultBranding, ...config }));
+          const config = brandSnap.data() as BrandingConfig;
+          setBrandingState(prev => {
+            const merged = { ...prev, ...config };
+            if (config.categories === undefined && prev.categories) merged.categories = prev.categories;
+            if (config.offers === undefined && prev.offers) merged.offers = prev.offers;
+            if (config.slider === undefined && prev.slider) merged.slider = prev.slider;
+            try { localStorage.setItem('qaaf_branding_cache', JSON.stringify(merged)); } catch {}
+            return merged;
+          });
         } else {
           try {
-            // Seed the new database with the original db.json data
-            const dbData = (await import('./db.json')).default;
             const initialBrand = dbData.branding || defaultBranding;
             await setDoc(doc(db, 'branding', 'main'), initialBrand);
             setBrandingState(initialBrand);
+            try { localStorage.setItem('qaaf_branding_cache', JSON.stringify(initialBrand)); } catch {}
           } catch (e) {
-            console.error("Failed to seed branding from db.json", e);
+            console.error("Failed to seed branding:", e);
           }
         }
         
         setInitialLoading(false);
 
-
-        // Real-time listeners
+        // 3. Real-time listener for products (Firestore)
         onSnapshot(collection(db, 'products'), (snapshot) => {
-          const prods = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
-          setProductsState(prods);
-          localStorage.setItem('qaaf_products_cache', JSON.stringify(prods));
+          const updatedProds = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
+          setProductsState(updatedProds);
+          try { localStorage.setItem('qaaf_products_cache', JSON.stringify(updatedProds)); } catch {}
+          setFirestoreOk(true);
+          setLastRemoteUpdate(new Date().toISOString());
         });
 
+        // 4. Real-time listener for branding (Firestore)
         onSnapshot(doc(db, 'branding', 'main'), (snapshot) => {
           if (snapshot.exists()) {
             const config = snapshot.data() as Partial<BrandingConfig>;
-            
-            // Intercept and sanitize legacy brand names from Firebase
-            if (config.aboutTitle) config.aboutTitle = config.aboutTitle.replace(/Dr Rose/g, 'قاف').replace(/Dr\. Rose/g, 'قاف').replace(/نوري/g, 'قاف').replace(/NOURÉ/g, 'QAAF');
-            if (config.footerTextAr) config.footerTextAr = config.footerTextAr.replace(/Dr Rose/g, 'قاف').replace(/Dr\. Rose/g, 'قاف').replace(/نوري/g, 'قاف').replace(/NOURÉ/g, 'QAAF');
-            if (config.footerTextEn) config.footerTextEn = config.footerTextEn.replace(/Dr Rose/g, 'QAAF').replace(/Dr\. Rose/g, 'QAAF').replace(/نوري/g, 'قاف').replace(/NOURÉ/g, 'QAAF');
-            if (config.heroTitle) config.heroTitle = config.heroTitle.replace(/Dr Rose/g, 'QAAF').replace(/Dr\. Rose/g, 'QAAF').replace(/نوري/g, 'قاف').replace(/NOURÉ/g, 'QAAF');
-
             setBrandingState(prev => {
               const next = { ...prev, ...config };
-              localStorage.setItem('qaaf_branding_cache', JSON.stringify(next));
+              if (config.categories === undefined && prev.categories) next.categories = prev.categories;
+              if (config.offers === undefined && prev.offers) next.offers = prev.offers;
+              if (config.slider === undefined && prev.slider) next.slider = prev.slider;
+              try { localStorage.setItem('qaaf_branding_cache', JSON.stringify(next)); } catch {}
               return next;
             });
           }
         });
 
+        // 5. Real-time listeners for all other collections
         onSnapshot(collection(db, 'orders'), (snapshot) => {
           const ords = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
           setOrdersState(ords);
@@ -456,13 +451,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             } as Review;
           }).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
           setReviewsState(revs);
-          localStorage.setItem('qaaf_reviews_cache', JSON.stringify(revs));
+          try { localStorage.setItem('qaaf_reviews_cache', JSON.stringify(revs)); } catch {}
         });
 
         onSnapshot(collection(db, 'consultations'), (snapshot) => {
           const cons = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Consultation))
             .sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
           setConsultationsState(cons);
+        });
+
+        onSnapshot(collection(db, 'support_tickets'), (snapshot) => {
+          const tickets = snapshot.docs.map(doc => {
+            const data = doc.data() as any;
+            return {
+              id: doc.id,
+              customerName: data.customerName,
+              phone: data.phone,
+              message: data.message,
+              imageUrl: data.imageUrl || null,
+              status: data.status || 'new',
+              isOpen: data.isOpen ?? true,
+              isClosed: data.isClosed ?? false,
+              closedBy: data.closedBy || null,
+              assignedStaffId: data.assignedStaffId || undefined,
+              orderId: data.orderId || null,
+              orderMatch: data.orderMatch || 'none',
+              createdAt: data.createdAt,
+              updatedAt: data.updatedAt,
+              messages: (data.messages || []) as SupportMessage[]
+            } as SupportTicket;
+          }).sort((a,b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+          setSupportTicketsState(tickets);
+          try { localStorage.setItem('qaaf_support_tickets', JSON.stringify(tickets)); } catch {}
         });
 
         onSnapshot(collection(db, 'customers'), (snapshot) => {
@@ -481,6 +501,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         });
 
       } catch (e) {
+        console.error('Error fetching data from Firestore:', e);
         setInitialLoading(false);
       }
     };
@@ -548,14 +569,61 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const setBranding = async (config: BrandingConfig) => {
     setBrandingState(config);
-    await setDoc(doc(db, 'branding', 'main'), config);
+    // Always update localStorage immediately so refresh shows latest data
+    try { localStorage.setItem('qaaf_branding_cache', JSON.stringify(config)); } catch {}
+    try {
+      // Use setDoc with merge:false to fully replace — config is always the complete object
+      await setDoc(doc(db, 'branding', 'main'), config);
+    } catch (e) {
+      console.error('Failed to save branding to Firestore:', e);
+      if (typeof window !== 'undefined') alert('فشل حفظ التغييرات على الخادم. التغييرات مخزّنة محليًا مؤقتاً.');
+    }
   };
 
   const setProducts = async (action: React.SetStateAction<Product[]>) => {
-    const next = typeof action === 'function' ? action(products) : action;
+    // Capture snapshot of previous products BEFORE updating state
+    const prev = products;
+    const next = typeof action === 'function' ? action(prev) : action;
+
+    // Optimistic local update immediately
     setProductsState(next);
-    for (const p of next) {
-      await setDoc(doc(db, 'products', p.id), p);
+    try { localStorage.setItem('qaaf_products_cache', JSON.stringify(next)); } catch {}
+
+    const nextIds = new Set(next.map(p => p.id));
+    let anySuccess = false;
+
+    try {
+      // 1. Delete removed products from Firestore
+      for (const old of prev) {
+        if (!nextIds.has(old.id)) {
+          try {
+            await deleteDoc(doc(db, 'products', old.id));
+            console.info(`Deleted product ${old.id} from Firestore.`);
+          } catch (e) {
+            console.error(`Failed to delete product ${old.id} from Firestore:`, e);
+          }
+        }
+      }
+
+      // 2. Upsert each product in Firestore
+      for (const p of next) {
+        await setDoc(doc(db, 'products', p.id), p);
+        console.info(`Persisted product ${p.id} to Firestore.`);
+      }
+      anySuccess = true;
+    } catch (e) {
+      console.error('setProducts Firestore write error:', e);
+    }
+
+    if (anySuccess) {
+      setFirestoreOk(true);
+      setLastRemoteUpdate(new Date().toISOString());
+      setLastWriteError(null);
+    } else {
+      setFirestoreOk(false);
+      const errMsg = 'فشل حفظ التغييرات إلى الخادم.';
+      setLastWriteError(errMsg);
+      if (typeof window !== 'undefined') alert(errMsg);
     }
   };
 
@@ -848,6 +916,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       messages: ticket.messages || [{ id: `msg-${Date.now()}`, sender: 'customer', text: ticket.message, imageUrl: ticket.imageUrl, createdAt: now }]
     };
 
+    // Persist to Firestore for real-time sync
+    try {
+      await setDoc(doc(db, 'support_tickets', supportTicket.id), {
+        customerName: supportTicket.customerName,
+        phone: supportTicket.phone,
+        message: supportTicket.message,
+        imageUrl: supportTicket.imageUrl || null,
+        status: supportTicket.status,
+        isOpen: supportTicket.isOpen,
+        isClosed: supportTicket.isClosed,
+        closedBy: supportTicket.closedBy || null,
+        orderId: supportTicket.orderId || null,
+        orderMatch: supportTicket.orderMatch || 'none',
+        createdAt: supportTicket.createdAt,
+        updatedAt: supportTicket.updatedAt,
+        messages: supportTicket.messages || []
+      });
+    } catch (e) {
+      console.error('Failed to persist support ticket:', e);
+    }
+
+    // Optimistic local update; real source of truth will be Firestore onSnapshot
     const next = [supportTicket, ...supportTickets];
     setSupportTicketsState(next);
     try { localStorage.setItem('qaaf_support_tickets', JSON.stringify(next)); } catch {}
@@ -856,21 +946,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const addSupportMessage = async (ticketId: string, message: Omit<SupportMessage, 'id' | 'createdAt'>) => {
     const now = new Date().toISOString();
-    const next: SupportTicket[] = supportTickets.map(ticket => {
-      if (ticket.id !== ticketId) return ticket;
-      const msg: SupportMessage = { ...message, id: `msg-${Date.now()}-${Math.random()}`, createdAt: now };
-      const nextStatus: SupportTicket['status'] = msg.sender === 'customer' ? 'waiting' : 'assigned';
-      return {
-        ...ticket,
-        isOpen: !ticket.isClosed,
-        isClosed: !!ticket.isClosed,
-        messages: [...ticket.messages, msg],
+    const msg: SupportMessage = { ...message, id: `msg-${Date.now()}-${Math.random()}`, createdAt: now };
+    const ticketRef = doc(db, 'support_tickets', ticketId);
+    const nextStatus: SupportTicket['status'] = msg.sender === 'customer' ? 'waiting' : 'assigned';
+    try {
+      await updateDoc(ticketRef, {
+        messages: arrayUnion(msg),
+        status: nextStatus,
         updatedAt: now,
-        status: nextStatus
-      };
-    });
-    setSupportTicketsState(next);
-    try { localStorage.setItem('qaaf_support_tickets', JSON.stringify(next)); } catch {}
+        isOpen: true
+      });
+    } catch (e) {
+      // Fallback to local update if remote fails
+      console.error('Failed to write support message to remote DB:', e);
+      const next: SupportTicket[] = supportTickets.map(ticket => {
+        if (ticket.id !== ticketId) return ticket;
+        return {
+          ...ticket,
+          isOpen: !ticket.isClosed,
+          isClosed: !!ticket.isClosed,
+          messages: [...ticket.messages, msg],
+          updatedAt: now,
+          status: nextStatus
+        };
+      });
+      setSupportTicketsState(next);
+      try { localStorage.setItem('qaaf_support_tickets', JSON.stringify(next)); } catch {}
+      return;
+    }
+    // optimistic local update will be replaced by onSnapshot listener
   };
 
   const assignSupportTicket = async (ticketId: string, staffId: string) => {
@@ -944,7 +1048,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteProduct = async (id: string) => {
-    await deleteDoc(doc(db, 'products', id));
+    try {
+      await deleteDoc(doc(db, 'products', id));
+    } catch (e) {
+      console.error('Failed to delete product from Firestore:', e);
+      // Optimistically remove locally so admin sees immediate effect
+      setProductsState(prev => (prev || []).filter(p => p.id !== id));
+      try { localStorage.setItem('qaaf_products_cache', JSON.stringify((products || []).filter(p => p.id !== id))); } catch {}
+      if (typeof window !== 'undefined') alert('فشل حذف المنتج من الخادم؛ تم إخفاؤه محلياً مؤقتاً.');
+    }
   };
 
   const addStaff = async (member: StaffMember) => {
@@ -1085,7 +1197,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       addConsultation, updateConsultation, updateProductStock,
       reviews, setReviews: setReviewsState,
       addReview, updateReview, deleteReview,
-      initialLoading, t
+      initialLoading, t,
+      firestoreOk, lastRemoteUpdate, lastWriteError
     }}>
       {children}
     </AppContext.Provider>

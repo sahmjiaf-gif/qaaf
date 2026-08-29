@@ -106,13 +106,19 @@ const Products: React.FC = () => {
     }
   };
 
-  const deleteCategory = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (window.confirm('هل أنت متأكد من حذف هذا القسم؟ سيتم إخفاء المنتجات التابعة له من هذا العرض.')) {
+  const deleteCategory = (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const catToDelete = categories.find(c => c.id === id);
+    const catName = catToDelete?.name || 'هذا القسم';
+    if (window.confirm(`هل أنت متأكد من حذف قسم "${catName}"؟`)) {
+      const nextCategories = categories.filter(c => c.id !== id);
       setBranding({
         ...branding,
-        categories: categories.filter(c => c.id !== id)
+        categories: nextCategories
       });
+      if (activeCategory?.id === id) {
+        setActiveCategory(null);
+      }
     }
   };
 
@@ -130,14 +136,12 @@ const Products: React.FC = () => {
       } as Product;
       
       try {
-        const { db } = await import('../../firebase');
-        const { doc, setDoc } = await import('firebase/firestore');
-        await setDoc(doc(db, 'products', product.id), product);
+        await setProducts(prev => [product, ...(prev || [])]);
         setShowAddProduct(false);
         setNewProduct({ name: '', price: 0, category: '', description: '', image: '', inStock: true, isOnSale: false, salePrice: 0, saleExpiry: '', sizes: [], colors: [] });
       } catch (err) {
         console.error("Error adding product:", err);
-        alert('حدث خطأ أثناء الإضافة للفايربيس');
+        alert('حدث خطأ أثناء الإضافة. التأكد من الاتصال أو محاولة إعادة التحميل.');
       }
     }
   };
@@ -173,13 +177,10 @@ const Products: React.FC = () => {
         const ws = wb.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json(ws);
         
-        let addedCount = 0;
-        const { db } = await import('../../firebase');
-        const { doc, setDoc } = await import('firebase/firestore');
-
+        const toAdd: Product[] = [];
         for (const row of data as any[]) {
           if (!row['اسم المنتج'] || !row['السعر']) continue;
-          
+
           const newProd: Product = {
             id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
             name: row['اسم المنتج'],
@@ -193,11 +194,12 @@ const Products: React.FC = () => {
             image: row['رابط الصورة'] || '',
             isOnSale: false
           } as Product;
-          
-          await setDoc(doc(db, 'products', newProd.id), newProd);
-          addedCount++;
+          toAdd.push(newProd);
         }
-        alert(`تم استيراد ${addedCount} منتج بنجاح!`);
+        if (toAdd.length > 0) {
+          await setProducts(prev => [...toAdd, ...(prev || [])]);
+        }
+        alert(`تم استيراد ${toAdd.length} منتج بنجاح!`);
       } catch (err) {
         console.error("Error importing:", err);
         alert('حدث خطأ أثناء استيراد الملف. تأكد من صحة الصيغة.');
@@ -279,7 +281,15 @@ const Products: React.FC = () => {
                  </div>
               </div>
             </div>
-            <div className="flex gap-3">
+            <div className="flex flex-wrap items-center gap-3">
+               <button 
+                 onClick={() => deleteCategory(activeCategory.id)} 
+                 className="bg-red-50 text-red-600 hover:bg-red-600 hover:text-white px-5 py-3 rounded-2xl font-bold flex items-center gap-2 transition-all shadow-sm"
+                 title="حذف هذا القسم"
+               >
+                 <Trash2 size={18} />
+                 حذف القسم
+               </button>
                <label className="bg-blue-50 text-blue-600 px-6 py-3 rounded-2xl font-bold flex items-center gap-2 hover:bg-blue-600 hover:text-white transition cursor-pointer">
                  <Upload size={18} />
                  استيراد
@@ -338,7 +348,8 @@ const Products: React.FC = () => {
                   </div>
                   <button 
                     onClick={(e) => deleteCategory(cat.id, e)}
-                    className="absolute top-4 left-4 p-3 bg-white/10 backdrop-blur-md text-white/60 hover:text-red-400 hover:bg-white transition-all rounded-2xl opacity-0 group-hover:opacity-100"
+                    title="حذف هذا القسم"
+                    className="absolute top-4 left-4 p-3 bg-red-600/80 backdrop-blur-md text-white hover:bg-red-600 hover:scale-110 transition-all rounded-2xl shadow-lg z-10"
                   >
                     <Trash2 size={18} />
                   </button>
