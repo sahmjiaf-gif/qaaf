@@ -9,8 +9,10 @@ const __dirname = path.dirname(__filename);
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
+    // On GitHub Actions, base must be the repo name for GitHub Pages
+    const isGitHubPages = process.env.GITHUB_ACTIONS === 'true';
     return {
-      base: './',
+      base: isGitHubPages ? '/qaaf-store/' : '/',
       server: {
         port: 3000,
         host: '0.0.0.0',
