@@ -45,7 +45,7 @@ export const translations = {
     addedQuantityToCart: 'تم إضافة {quantity} من "{name}" للسلة!',
     backToHome: 'العودة للرئيسية',
     orderStatus: {
-      pending: 'قيد الانتظار',
+      pending: 'برجاء الدفع',
       processing: 'جاري التجهيز',
       shipped: 'جاري التوصيل',
       delivered: 'تم التوصيل',
@@ -207,7 +207,7 @@ export const translations = {
     addedQuantityToCart: 'Added {quantity} of "{name}" to cart!',
     backToHome: 'Back to Home',
     orderStatus: {
-      pending: 'Pending',
+      pending: 'Please pay',
       processing: 'Processing',
       shipped: 'Shipped',
       delivered: 'Delivered',

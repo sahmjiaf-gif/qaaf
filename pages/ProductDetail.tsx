@@ -255,6 +255,7 @@ const ProductDetail: React.FC = () => {
           }
         })),
         status: 'pending',
+        paymentStatus: 'required',
         date: new Date().toISOString(),
         finalTotal: cartTotalPrice,
         shippingFee: shippingFee,
@@ -694,12 +695,13 @@ const ProductDetail: React.FC = () => {
                   <span>{t.total}</span>
                   <span>{cartTotalPrice} {t.egp}</span>
                 </div>
-                <button 
-                  onClick={() => setShowCheckout(true)} 
+                <button
+                  type="button"
+                  onClick={() => setShowCheckout(true)}
+                  className="w-full py-5 text-white text-[10px] font-black uppercase tracking-[0.35em] hover:opacity-90 transition-all shadow-[0_20px_40px_rgba(0,0,0,0.08)] rounded-[1.75rem]"
                   style={{ backgroundColor: branding?.primaryColor || theme?.primaryColor || '#000' }}
-                  className="w-full py-5 text-white text-[10px] font-bold uppercase tracking-[0.4em] hover:opacity-90 transition"
                 >
-                  {t.confirmOrder}
+                  {language === 'ar' ? 'أتمم استلام طلبك' : 'Complete your order'}
                 </button>
               </div>
             )}
@@ -913,24 +915,10 @@ const ProductDetail: React.FC = () => {
               <button
                 type="button"
                 onClick={submitOrder}
-                className={`order ${isOrderAnimating ? 'animate' : ''}`}>
-                <span className="default">{language === 'ar' ? 'اتمام الطلب' : 'Complete Order'}</span>
-                <span className="success">
-                  {language === 'ar' ? 'تم استلام طلبك' : 'Order Placed'}
-                  <svg viewBox="0 0 12 10">
-                    <polyline points="1.5 6 4.5 9 10.5 1"></polyline>
-                  </svg>
-                </span>
-                <div className="box"></div>
-                <div className="truck">
-                  <div className="back"></div>
-                  <div className="front">
-                    <div className="window"></div>
-                  </div>
-                  <div className="light top"></div>
-                  <div className="light bottom"></div>
-                </div>
-                <div className="lines"></div>
+                className="w-full max-w-[430px] py-5 text-white text-[10px] font-black uppercase tracking-[0.35em] hover:opacity-90 transition-all shadow-[0_20px_40px_rgba(0,0,0,0.08)] rounded-[1.75rem]"
+                style={{ backgroundColor: branding?.primaryColor || theme?.primaryColor || '#000' }}
+              >
+                {language === 'ar' ? 'أتمم استلام طلبك' : 'Complete your order'}
               </button>
             </div>
           </form>

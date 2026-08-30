@@ -307,6 +307,11 @@ export interface SupportTicket {
   assignedStaffId?: string;
   orderId?: string;
   orderMatch?: 'matched' | 'pending' | 'none';
+  customerIntent?: 'shipping_fee' | 'payment_confirmation' | 'order_status' | 'general';
+  botStep?: 'ask_shipping_fee' | 'ask_paid' | 'await_transfer_proof' | 'route_to_agent' | 'queue_wait' | 'payment_verified' | 'completed';
+  queuePosition?: number;
+  waitingCount?: number;
+  availableStaffCount?: number;
   createdAt: string;
   updatedAt: string;
   messages: SupportMessage[];

@@ -29,7 +29,7 @@ const Logo = ({ className = "" }: { className?: string }) => {
   );
 };
 
-const StatusBadge = ({ status }: { status: OrderStatus }) => {
+const StatusBadge = ({ status, paymentStatus }: { status: OrderStatus; paymentStatus?: 'required' | 'pending' | 'confirmed' }) => {
   const { language, theme } = useApp();
   const t = translations[language];
 
@@ -42,12 +42,14 @@ const StatusBadge = ({ status }: { status: OrderStatus }) => {
     return 'rounded-full';
   };
 
+  const pendingLabel = paymentStatus === 'required' ? (language === 'ar' ? 'برجاء الدفع' : 'Please pay') : t.orderStatus.pending;
+
   switch (status) {
     case 'pending':
       return (
         <div className={`flex items-center gap-2 px-3 py-1 bg-amber-50 text-amber-700 text-[10px] font-bold uppercase tracking-widest ${getBorderRadius()}`}>
           <Clock size={12} />
-          <span>{t.orderStatus.pending}</span>
+          <span>{pendingLabel}</span>
         </div>
       );
     case 'approved':
@@ -334,7 +336,7 @@ const MyOrders: React.FC = () => {
                               </div>
                               <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">{t.orderNumber}: #{order.id}</p>
                             </div>
-                            <StatusBadge status={order.status} />
+                            <StatusBadge status={order.status} paymentStatus={order.paymentStatus} />
                           </div>
 
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4 border-t border-gray-50">

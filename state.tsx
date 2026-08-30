@@ -85,6 +85,7 @@ interface AppContextType {
   assignSupportTicket: (ticketId: string, staffId: string) => Promise<void>;
   resolveSupportTicket: (ticketId: string, note?: string) => Promise<void>;
   closeSupportTicket: (ticketId: string, closedBy?: 'customer' | 'agent' | 'system', note?: string) => Promise<void>;
+  getSupportQueueStatus: (ticketId?: string) => { totalWaiting: number; availableStaff: number; queuePosition: number; hasAvailableStaff: boolean; isBusy: boolean; };
   findPendingOrderMatch: (input: { phone?: string; name?: string; text?: string; }) => { orderId?: string; order?: Order; reason: string; matched: boolean; };
   addConsultation: (cons: Consultation) => Promise<void>;
   updateConsultation: (id: string, data: Partial<Consultation>) => Promise<void>;
@@ -873,6 +874,62 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await updateDoc(doc(db, 'products', id), updateData);
   };
 
+  const getSupportQueueStatus = (ticketId?: string) => {
+    const activeTickets = (supportTickets || [])
+      .filter(ticket => !ticket.isClosed && ticket.status !== 'resolved');
+
+    const waitingTickets = [...activeTickets]
+      .filter(ticket => !ticket.assignedStaffId || ticket.status === 'waiting' || ticket.status === 'new')
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+    const availableStaff = staff.filter(member => member.isOnline && (member.permissions.includes('support' as any) || member.permissions.includes('orders' as any) || member.permissions.includes('consultations' as any)));
+    const queuePosition = ticketId ? (waitingTickets.findIndex(ticket => ticket.id === ticketId) + 1) : waitingTickets.length;
+
+    return {
+      totalWaiting: waitingTickets.length,
+      availableStaff: availableStaff.length,
+      queuePosition: Math.max(queuePosition, 0),
+      hasAvailableStaff: availableStaff.length > 0,
+      isBusy: availableStaff.length === 0,
+    };
+  };
+
+  const buildSupportBotMessages = (text: string, queueStatus?: ReturnType<typeof getSupportQueueStatus>): SupportMessage[] => {
+    const now = new Date().toISOString();
+    const normalized = (text || '').toLowerCase();
+    const isShippingIssue = /(دفع|توصيل|شحن|shipping|delivery|delivery fee|shipping fee|رسوم الشحن)/i.test(normalized);
+    const hasPaidAnswer = /(نعم|اه|yes|paid|دفعت|تم الدفع|دفعته|already paid)/i.test(normalized);
+
+    const messages: SupportMessage[] = [
+      { id: `msg-${Date.now()}-system-1`, sender: 'system', text: 'هل الرسالة بخصوص دفع التوصيل؟', createdAt: now },
+    ];
+
+    if (isShippingIssue) {
+      messages.push({ id: `msg-${Date.now()}-system-2`, sender: 'system', text: 'هل قمت بالدفع بالفعل؟', createdAt: now });
+    } else {
+      messages.push({ id: `msg-${Date.now()}-system-2`, sender: 'system', text: 'تم تحويلك لخدمة العملاء مباشرة.', createdAt: now });
+    }
+
+    if (!queueStatus || queueStatus.isBusy) {
+      const waitingCount = queueStatus ? Math.max(queueStatus.totalWaiting + 1, queueStatus.queuePosition || 1) : 1;
+      messages.push({
+        id: `msg-${Date.now()}-system-3`,
+        sender: 'system',
+        text: `جميع موظفي خدمة العملاء مشغولين الآن. عدد الأشخاص أمامك: ${waitingCount}. سيتم إبلاغك فورًا عند دخول موعدك.`,
+        createdAt: now
+      });
+    } else if (hasPaidAnswer) {
+      messages.push({
+        id: `msg-${Date.now()}-system-3`,
+        sender: 'system',
+        text: 'أرسل صورة التحويل وبيانات الطلب (رقم الطلب أو رقم الهاتف) لتأكيد الدفع تلقائيًا.',
+        createdAt: now
+      });
+    }
+
+    return messages;
+  };
+
   const findPendingOrderMatch = (input: { phone?: string; name?: string; text?: string; }) => {
     const cleanPhone = (input.phone || '').replace(/\D/g, '');
     const cleanName = (input.name || '').trim().toLowerCase();
@@ -899,21 +956,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const createSupportTicket = async (ticket: Omit<SupportTicket, 'id' | 'createdAt' | 'updatedAt' | 'status' | 'messages'> & { message: string; imageUrl?: string; messages?: SupportMessage[]; }) => {
     const now = new Date().toISOString();
     const lookup = findPendingOrderMatch({ phone: ticket.phone, name: ticket.customerName, text: ticket.message });
+    const queueStatus = getSupportQueueStatus();
+    const availableSupportStaff = staff.filter(member => member.isOnline && (member.permissions.includes('support' as any) || member.permissions.includes('orders' as any) || member.permissions.includes('consultations' as any)));
+    const assignedSupportStaff = availableSupportStaff.length > 0
+      ? [...availableSupportStaff].sort((a, b) => {
+          const countA = (supportTickets || []).filter(item => item.assignedStaffId === a.id && item.status !== 'resolved').length;
+          const countB = (supportTickets || []).filter(item => item.assignedStaffId === b.id && item.status !== 'resolved').length;
+          return countA - countB;
+        })[0]
+      : undefined;
+
+    const customerMessage: SupportMessage = {
+      id: `msg-${Date.now()}-customer`,
+      sender: 'customer',
+      text: ticket.message,
+      imageUrl: ticket.imageUrl,
+      createdAt: now
+    };
+
     const supportTicket: SupportTicket = {
       id: `support-${Date.now()}`,
       customerName: ticket.customerName,
       phone: ticket.phone,
       message: ticket.message,
       imageUrl: ticket.imageUrl,
-      status: lookup.matched ? 'waiting' : 'new',
+      status: assignedSupportStaff ? 'assigned' : 'waiting',
       isOpen: true,
       isClosed: false,
       closedBy: undefined,
+      assignedStaffId: assignedSupportStaff?.id,
       orderId: lookup.orderId,
       orderMatch: lookup.matched ? 'matched' : 'none',
+      customerIntent: /(?:دفع|توصيل|شحن|shipping|delivery|paid|payment)/i.test(ticket.message) ? 'shipping_fee' : 'general',
+      botStep: assignedSupportStaff ? 'ask_paid' : 'queue_wait',
+      queuePosition: assignedSupportStaff ? 0 : Math.max(queueStatus.totalWaiting + 1, 1),
+      waitingCount: Math.max(queueStatus.totalWaiting + 1, 1),
+      availableStaffCount: queueStatus.availableStaff,
       createdAt: now,
       updatedAt: now,
-      messages: ticket.messages || [{ id: `msg-${Date.now()}`, sender: 'customer', text: ticket.message, imageUrl: ticket.imageUrl, createdAt: now }]
+      messages: ticket.messages && ticket.messages.length > 0 ? ticket.messages : [customerMessage, ...buildSupportBotMessages(ticket.message, queueStatus)]
     };
 
     // Persist to Firestore for real-time sync
@@ -927,8 +1008,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isOpen: supportTicket.isOpen,
         isClosed: supportTicket.isClosed,
         closedBy: supportTicket.closedBy || null,
+        assignedStaffId: supportTicket.assignedStaffId || null,
         orderId: supportTicket.orderId || null,
         orderMatch: supportTicket.orderMatch || 'none',
+        customerIntent: supportTicket.customerIntent || 'general',
+        botStep: supportTicket.botStep || 'ask_shipping_fee',
+        queuePosition: supportTicket.queuePosition || 0,
+        waitingCount: supportTicket.waitingCount || 0,
+        availableStaffCount: supportTicket.availableStaffCount || 0,
         createdAt: supportTicket.createdAt,
         updatedAt: supportTicket.updatedAt,
         messages: supportTicket.messages || []
@@ -947,27 +1034,95 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const addSupportMessage = async (ticketId: string, message: Omit<SupportMessage, 'id' | 'createdAt'>) => {
     const now = new Date().toISOString();
     const msg: SupportMessage = { ...message, id: `msg-${Date.now()}-${Math.random()}`, createdAt: now };
+    const ticket = supportTickets.find(item => item.id === ticketId);
     const ticketRef = doc(db, 'support_tickets', ticketId);
-    const nextStatus: SupportTicket['status'] = msg.sender === 'customer' ? 'waiting' : 'assigned';
+
+    const normalizedText = (message.text || '').toLowerCase();
+    const isShippingQuestion = /(دفع|توصيل|شحن|shipping|delivery|delivery fee|shipping fee)/i.test(normalizedText);
+    const answeredYes = /(نعم|اه|yes|paid|دفعت|تم الدفع|already paid)/i.test(normalizedText);
+    const answeredNo = /(لا|no|not|لم|not yet|nope)/i.test(normalizedText);
+
+    let nextStatus: SupportTicket['status'] = msg.sender === 'customer' ? 'waiting' : 'assigned';
+    let nextBotStep: SupportTicket['botStep'] = ticket?.botStep || 'ask_shipping_fee';
+    let nextCustomerIntent: SupportTicket['customerIntent'] = ticket?.customerIntent || 'general';
+    let updateData: Record<string, any> = {
+      messages: arrayUnion(msg),
+      status: nextStatus,
+      updatedAt: now,
+      isOpen: true
+    };
+
+    if (msg.sender === 'customer') {
+      if (isShippingQuestion && answeredNo) {
+        const queueState = getSupportQueueStatus(ticketId);
+        const availableStaff = staff.filter(member => member.isOnline && (member.permissions.includes('support' as any) || member.permissions.includes('orders' as any) || member.permissions.includes('consultations' as any)));
+        const assigned = availableStaff.length > 0 ? [...availableStaff].sort((a, b) => {
+          const countA = (supportTickets || []).filter(item => item.assignedStaffId === a.id && item.status !== 'resolved').length;
+          const countB = (supportTickets || []).filter(item => item.assignedStaffId === b.id && item.status !== 'resolved').length;
+          return countA - countB;
+        })[0] : undefined;
+
+        nextStatus = assigned ? 'assigned' : 'waiting';
+        nextBotStep = assigned ? 'route_to_agent' : 'queue_wait';
+        nextCustomerIntent = 'shipping_fee';
+
+        const queueMessage: SupportMessage = {
+          id: `msg-${Date.now()}-system-route`,
+          sender: 'system',
+          text: assigned
+            ? 'تم تحويلك لخدمة العملاء مباشرة.'
+            : `جميع موظفي خدمة العملاء مشغولين الآن. عدد الأشخاص أمامك: ${Math.max(queueState.totalWaiting + 1, 1)}. سيتم إبلاغك فورًا عند دخول موعدك.`,
+          createdAt: now
+        };
+
+        updateData = {
+          ...updateData,
+          status: nextStatus,
+          assignedStaffId: assigned?.id || ticket?.assignedStaffId || null,
+          botStep: nextBotStep,
+          customerIntent: nextCustomerIntent,
+          queuePosition: assigned ? 0 : Math.max(queueState.totalWaiting + 1, 1),
+          waitingCount: Math.max(queueState.totalWaiting + 1, 1),
+          availableStaffCount: queueState.availableStaff,
+          messages: arrayUnion(msg, queueMessage)
+        };
+      }
+
+      if (answeredYes && isShippingQuestion) {
+        nextBotStep = 'await_transfer_proof';
+        nextCustomerIntent = 'payment_confirmation';
+        const proofPrompt: SupportMessage = {
+          id: `msg-${Date.now()}-system-proof`,
+          sender: 'system',
+          text: 'أرسل صورة التحويل مع رقم الطلب أو رقم الهاتف لتأكيد الدفع تلقائيًا.',
+          createdAt: now
+        };
+
+        updateData = {
+          ...updateData,
+          botStep: nextBotStep,
+          customerIntent: nextCustomerIntent,
+          messages: arrayUnion(msg, proofPrompt)
+        };
+      }
+    }
+
     try {
-      await updateDoc(ticketRef, {
-        messages: arrayUnion(msg),
-        status: nextStatus,
-        updatedAt: now,
-        isOpen: true
-      });
+      await updateDoc(ticketRef, updateData);
     } catch (e) {
       // Fallback to local update if remote fails
       console.error('Failed to write support message to remote DB:', e);
-      const next: SupportTicket[] = supportTickets.map(ticket => {
-        if (ticket.id !== ticketId) return ticket;
+      const next: SupportTicket[] = supportTickets.map(item => {
+        if (item.id !== ticketId) return item;
         return {
-          ...ticket,
-          isOpen: !ticket.isClosed,
-          isClosed: !!ticket.isClosed,
-          messages: [...ticket.messages, msg],
+          ...item,
+          isOpen: !item.isClosed,
+          isClosed: !!item.isClosed,
+          status: nextStatus,
+          botStep: nextBotStep,
+          customerIntent: nextCustomerIntent,
+          messages: [...item.messages, msg],
           updatedAt: now,
-          status: nextStatus
         };
       });
       setSupportTicketsState(next);
@@ -978,13 +1133,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const assignSupportTicket = async (ticketId: string, staffId: string) => {
-    const next: SupportTicket[] = supportTickets.map(ticket => ticket.id === ticketId ? { ...ticket, assignedStaffId: staffId, status: 'assigned', isOpen: !ticket.isClosed, isClosed: !!ticket.isClosed, updatedAt: new Date().toISOString() } : ticket);
+    const next: SupportTicket[] = supportTickets.map(ticket => ticket.id === ticketId ? {
+      ...ticket,
+      assignedStaffId: staffId,
+      status: 'assigned',
+      isOpen: !ticket.isClosed,
+      isClosed: !!ticket.isClosed,
+      queuePosition: 0,
+      waitingCount: 0,
+      availableStaffCount: staff.filter(member => member.isOnline && (member.permissions.includes('support' as any) || member.permissions.includes('orders' as any) || member.permissions.includes('consultations' as any))).length,
+      updatedAt: new Date().toISOString()
+    } : ticket);
     setSupportTicketsState(next);
     try { localStorage.setItem('qaaf_support_tickets', JSON.stringify(next)); } catch {}
   };
 
   const resolveSupportTicket = async (ticketId: string, note?: string) => {
-    const next: SupportTicket[] = supportTickets.map(ticket => ticket.id === ticketId ? { ...ticket, status: 'resolved', isOpen: false, isClosed: true, closedBy: 'agent', updatedAt: new Date().toISOString(), messages: [...ticket.messages, { id: `msg-${Date.now()}`, sender: 'system', text: note || 'تم حل الطلب / إغلاق التذكرة', createdAt: new Date().toISOString() }] } as SupportTicket : ticket);
+    const next: SupportTicket[] = supportTickets.map(ticket => ticket.id === ticketId ? { ...ticket, status: 'resolved', isOpen: false, isClosed: true, closedBy: 'agent', queuePosition: 0, waitingCount: 0, updatedAt: new Date().toISOString(), messages: [...ticket.messages, { id: `msg-${Date.now()}`, sender: 'system', text: note || 'تم حل الطلب / إغلاق التذكرة', createdAt: new Date().toISOString() }] } as SupportTicket : ticket);
     setSupportTicketsState(next);
     try { localStorage.setItem('qaaf_support_tickets', JSON.stringify(next)); } catch {}
   };
@@ -999,6 +1164,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isOpen: false,
         isClosed: true,
         closedBy,
+        queuePosition: 0,
+        waitingCount: 0,
         updatedAt: new Date().toISOString(),
         messages: [...ticket.messages, { id: `msg-${Date.now()}`, sender: 'system', text: closeText, createdAt: new Date().toISOString() }]
       } as SupportTicket;
@@ -1181,7 +1348,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       customers, setCustomers: setCustomersState,
       consultations, setConsultations: setConsultationsState,
       supportTickets, setSupportTickets: setSupportTicketsState,
-      createSupportTicket, addSupportMessage, assignSupportTicket, resolveSupportTicket, closeSupportTicket, findPendingOrderMatch,
+      createSupportTicket, addSupportMessage, assignSupportTicket, resolveSupportTicket, closeSupportTicket, getSupportQueueStatus, findPendingOrderMatch,
       manufacturingRequests, setManufacturingRequests: setManufacturingRequestsState,
       staff, setStaff: setStaffState,
       addStaff, updateStaff, deleteStaff,

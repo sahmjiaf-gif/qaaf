@@ -1574,9 +1574,8 @@ const Home: React.FC = () => {
                 type="button"
                 onClick={submitOrder}
                 className={`order ${isOrderAnimating ? 'animate' : ''}`}>
-                <span className="default">{language === 'ar' ? 'اتمام الطلب' : 'Complete Order'}</span>
+                <span className="default">{language === 'ar' ? 'أتمم استلام طلبك' : 'Complete your order'}</span>
                 <span className="success">
-                  {language === 'ar' ? 'تم استلام طلبك' : 'Order Placed'}
                   <svg viewBox="0 0 12 10">
                     <polyline points="1.5 6 4.5 9 10.5 1"></polyline>
                   </svg>
