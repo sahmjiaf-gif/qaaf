@@ -304,6 +304,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch { return []; }
   });
 
+  const syncSupportTicketsFromRemote = async () => {
+    try {
+      const snapshot = await getDocs(collection(db, 'support_tickets'));
+      const tickets = snapshot.docs.map(doc => {
+        const data = doc.data() as any;
+        return {
+          id: doc.id,
+          customerName: data.customerName || '',
+          phone: data.phone || '',
+          message: data.message || '',
+          imageUrl: data.imageUrl || null,
+          status: data.status || 'new',
+          isOpen: data.isOpen ?? true,
+          isClosed: data.isClosed ?? false,
+          closedBy: data.closedBy || null,
+          assignedStaffId: data.assignedStaffId || undefined,
+          orderId: data.orderId || null,
+          orderMatch: data.orderMatch || 'none',
+          customerIntent: data.customerIntent || 'general',
+          botStep: data.botStep || 'ask_shipping_fee',
+          queuePosition: data.queuePosition || 0,
+          waitingCount: data.waitingCount || 0,
+          availableStaffCount: data.availableStaffCount || 0,
+          createdAt: data.createdAt || new Date().toISOString(),
+          updatedAt: data.updatedAt || data.createdAt || new Date().toISOString(),
+          messages: (data.messages || []) as SupportMessage[]
+        } as SupportTicket;
+      }).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+
+      setSupportTicketsState(tickets);
+      try { localStorage.setItem('qaaf_support_tickets', JSON.stringify(tickets)); } catch {}
+      return tickets;
+    } catch (error) {
+      console.error('Failed to sync support tickets from Firestore:', error);
+      return supportTickets;
+    }
+  };
+
   const setIsLoggedIn = (val: boolean) => {
     setIsLoggedInState(val);
     try {
@@ -526,6 +564,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }).sort((a,b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
           setSupportTicketsState(tickets);
           try { localStorage.setItem('qaaf_support_tickets', JSON.stringify(tickets)); } catch {}
+        }, (error) => {
+          console.error('Support tickets listener failed:', error);
+          syncSupportTicketsFromRemote();
         });
 
         onSnapshot(collection(db, 'customers'), (snapshot) => {
@@ -1154,6 +1195,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updatedAt: supportTicket.updatedAt,
         messages: supportTicket.messages || []
       });
+      await syncSupportTicketsFromRemote();
     } catch (e) {
       console.error('Failed to persist support ticket:', e);
     }
@@ -1243,6 +1285,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     try {
       await updateDoc(ticketRef, updateData);
+      await syncSupportTicketsFromRemote();
     } catch (e) {
       // Fallback to local update if remote fails
       console.error('Failed to write support message to remote DB:', e);
@@ -1267,6 +1310,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const assignSupportTicket = async (ticketId: string, staffId: string) => {
+    const updatedAt = new Date().toISOString();
     const next: SupportTicket[] = supportTickets.map(ticket => ticket.id === ticketId ? {
       ...ticket,
       assignedStaffId: staffId,
@@ -1276,19 +1320,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       queuePosition: 0,
       waitingCount: 0,
       availableStaffCount: staff.filter(member => member.isOnline && (member.permissions.includes('support' as any) || member.permissions.includes('orders' as any) || member.permissions.includes('consultations' as any))).length,
-      updatedAt: new Date().toISOString()
+      updatedAt
     } : ticket);
     setSupportTicketsState(next);
     try { localStorage.setItem('qaaf_support_tickets', JSON.stringify(next)); } catch {}
+
+    try {
+      await updateDoc(doc(db, 'support_tickets', ticketId), {
+        assignedStaffId: staffId,
+        status: 'assigned',
+        queuePosition: 0,
+        waitingCount: 0,
+        availableStaffCount: staff.filter(member => member.isOnline && (member.permissions.includes('support' as any) || member.permissions.includes('orders' as any) || member.permissions.includes('consultations' as any))).length,
+        updatedAt
+      });
+      await syncSupportTicketsFromRemote();
+    } catch (e) {
+      console.error('Failed to assign support ticket remotely:', e);
+    }
   };
 
   const resolveSupportTicket = async (ticketId: string, note?: string) => {
-    const next: SupportTicket[] = supportTickets.map(ticket => ticket.id === ticketId ? { ...ticket, status: 'resolved', isOpen: false, isClosed: true, closedBy: 'agent', queuePosition: 0, waitingCount: 0, updatedAt: new Date().toISOString(), messages: [...ticket.messages, { id: `msg-${Date.now()}`, sender: 'system', text: note || 'تم حل الطلب / إغلاق التذكرة', createdAt: new Date().toISOString() }] } as SupportTicket : ticket);
+    const updatedAt = new Date().toISOString();
+    const next: SupportTicket[] = supportTickets.map(ticket => ticket.id === ticketId ? { ...ticket, status: 'resolved', isOpen: false, isClosed: true, closedBy: 'agent', queuePosition: 0, waitingCount: 0, updatedAt, messages: [...ticket.messages, { id: `msg-${Date.now()}`, sender: 'system', text: note || 'تم حل الطلب / إغلاق التذكرة', createdAt: new Date().toISOString() }] } as SupportTicket : ticket);
     setSupportTicketsState(next);
     try { localStorage.setItem('qaaf_support_tickets', JSON.stringify(next)); } catch {}
+
+    try {
+      await updateDoc(doc(db, 'support_tickets', ticketId), {
+        status: 'resolved',
+        isOpen: false,
+        isClosed: true,
+        closedBy: 'agent',
+        queuePosition: 0,
+        waitingCount: 0,
+        updatedAt,
+        messages: [...(supportTickets.find(ticket => ticket.id === ticketId)?.messages || []), { id: `msg-${Date.now()}`, sender: 'system', text: note || 'تم حل الطلب / إغلاق التذكرة', createdAt: new Date().toISOString() }]
+      });
+      await syncSupportTicketsFromRemote();
+    } catch (e) {
+      console.error('Failed to resolve support ticket remotely:', e);
+    }
   };
 
   const closeSupportTicket = async (ticketId: string, closedBy: 'customer' | 'agent' | 'system' = 'customer', note?: string) => {
+    const updatedAt = new Date().toISOString();
     const next: SupportTicket[] = supportTickets.map(ticket => {
       if (ticket.id !== ticketId) return ticket;
       const closeText = note || (closedBy === 'customer' ? 'تم إغلاق المحادثة من العميل.' : closedBy === 'agent' ? 'تم إغلاق المحادثة من الموظف.' : 'تم إغلاق المحادثة.');
@@ -1300,12 +1376,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         closedBy,
         queuePosition: 0,
         waitingCount: 0,
-        updatedAt: new Date().toISOString(),
+        updatedAt,
         messages: [...ticket.messages, { id: `msg-${Date.now()}`, sender: 'system', text: closeText, createdAt: new Date().toISOString() }]
       } as SupportTicket;
     });
     setSupportTicketsState(next);
     try { localStorage.setItem('qaaf_support_tickets', JSON.stringify(next)); } catch {}
+
+    try {
+      const ticket = supportTickets.find(item => item.id === ticketId);
+      await updateDoc(doc(db, 'support_tickets', ticketId), {
+        status: 'resolved',
+        isOpen: false,
+        isClosed: true,
+        closedBy,
+        queuePosition: 0,
+        waitingCount: 0,
+        updatedAt,
+        messages: [...(ticket?.messages || []), { id: `msg-${Date.now()}`, sender: 'system', text: note || (closedBy === 'customer' ? 'تم إغلاق المحادثة من العميل.' : closedBy === 'agent' ? 'تم إغلاق المحادثة من الموظف.' : 'تم إغلاق المحادثة.'), createdAt: new Date().toISOString() }]
+      });
+      await syncSupportTicketsFromRemote();
+    } catch (e) {
+      console.error('Failed to close support ticket remotely:', e);
+    }
   };
 
   const addConsultation = async (cons: Consultation) => {
