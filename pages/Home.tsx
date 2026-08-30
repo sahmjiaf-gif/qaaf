@@ -407,9 +407,27 @@ const Home: React.FC = () => {
 
   const validHeroImage = branding?.heroImage && branding.heroImage !== 'undefined' && branding.heroImage !== 'null' ? branding.heroImage : null;
 
-  const filteredProducts = selectedCategory
-    ? contextProducts.filter(p => p.categoryId === selectedCategory)
-    : contextProducts;
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+  const filteredProducts = contextProducts.filter((product) => {
+    const matchesCategory = !selectedCategory || product.categoryId === selectedCategory;
+    if (!matchesCategory) return false;
+    if (!normalizedSearch) return true;
+
+    const haystack = [
+      product.name,
+      product.category,
+      product.description,
+      product.shortDescription,
+      product.categoryId,
+      product.tags?.join(' '),
+      branding?.categories?.find(c => c.id === product.categoryId)?.name,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+
+    return haystack.includes(normalizedSearch);
+  });
 
   const currentCategoryName = selectedCategory
     ? branding?.categories?.find(c => c.id === selectedCategory)?.name
@@ -1317,6 +1335,30 @@ const Home: React.FC = () => {
             </h2>
           </div>
 
+          <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div className="relative w-full md:max-w-md">
+              <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={language === 'ar' ? 'ابحث عن منتج...' : 'Search products...'}
+                className="w-full rounded-full border border-gray-200 bg-white px-12 py-3 text-sm text-gray-700 shadow-sm outline-none transition focus:border-[#c5a059] focus:ring-2 focus:ring-[#c5a059]/20"
+              />
+            </div>
+            {(selectedCategory || searchQuery) && (
+              <button
+                onClick={() => {
+                  setSelectedCategory(null);
+                  setSearchQuery('');
+                }}
+                className="text-xs font-bold text-amber-600 border-b border-amber-600 pb-1 hover:opacity-70 transition-all"
+              >
+                {language === 'ar' ? 'مسح المرشحات' : 'Clear filters'}
+              </button>
+            )}
+          </div>
+
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-8">
             {filteredProducts.length > 0 ? (
               filteredProducts.map((product, idx) => (
@@ -1333,8 +1375,12 @@ const Home: React.FC = () => {
               ))
             ) : (
               <div className="col-span-full py-20 text-center space-y-4">
-                <p className="text-gray-400 italic">{language === 'ar' ? 'لا توجد منتجات في هذا القسم حالياً' : 'No products found in this category'}</p>
-                <button onClick={() => setSelectedCategory(null)} className="text-xs font-bold text-amber-600 border-b border-amber-600 pb-1 hover:opacity-70 transition-all">
+                <p className="text-gray-400 italic">
+                  {language === 'ar'
+                    ? (searchQuery ? 'لا توجد منتجات مطابقة للبحث الحالي' : 'لا توجد منتجات في هذا القسم حالياً')
+                    : (searchQuery ? 'No products match your search' : 'No products found in this category')}
+                </p>
+                <button onClick={() => { setSelectedCategory(null); setSearchQuery(''); }} className="text-xs font-bold text-amber-600 border-b border-amber-600 pb-1 hover:opacity-70 transition-all">
                   {language === 'ar' ? 'عرض جميع المنتجات' : 'View all products'}
                 </button>
               </div>

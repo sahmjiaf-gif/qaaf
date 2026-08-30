@@ -180,13 +180,27 @@ const defaultBranding: BrandingConfig = {
 
 const mergeBrandingConfig = (base: BrandingConfig, incoming?: Partial<BrandingConfig>): BrandingConfig => {
   const next = { ...base, ...(incoming || {}) };
-  if (!incoming?.logoImage) {
-    next.logoImage = normalizeAssetUrl(base.logoImage) || normalizeAssetUrl('/qaaf-logo.jpg') || './qaaf-logo.jpg';
+const assetKeys = ['logoImage', 'heroImage', 'aboutImage', 'favicon', 'consultationImage'] as const;
+
+assetKeys.forEach((key) => {
+  const value = next[key];
+  if (!value || value === 'undefined' || value === 'null') {
+    next[key] = normalizeAssetUrl(base[key]) || normalizeAssetUrl('/qaaf-logo.jpg') || './qaaf-logo.jpg';
   } else {
-    next.logoImage = normalizeAssetUrl(next.logoImage) || normalizeAssetUrl('/qaaf-logo.jpg') || './qaaf-logo.jpg';
+    next[key] = normalizeAssetUrl(value) || normalizeAssetUrl(base[key]) || normalizeAssetUrl('/qaaf-logo.jpg') || './qaaf-logo.jpg';
   }
-  if (!incoming?.logoSize) next.logoSize = base.logoSize || 200;
-  return next;
+});
+
+if (Array.isArray(next.slider)) {
+  next.slider = next.slider.map(item => ({
+    ...item,
+    image: normalizeAssetUrl(item.image) || item.image,
+    mobileImage: normalizeAssetUrl(item.mobileImage) || item.mobileImage,
+  }));
+}
+
+if (!incoming?.logoSize) next.logoSize = base.logoSize || 200;
+return next;
 };
 
 const defaultAdmin: AdminCredentials = {
@@ -750,12 +764,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const setBranding = async (config: BrandingConfig) => {
-    setBrandingState(config);
-    // Always update localStorage immediately so refresh shows latest data
-    try { localStorage.setItem('qaaf_branding_cache', JSON.stringify(config)); } catch {}
+    const normalized = mergeBrandingConfig(defaultBranding, config);
+    setBrandingState(normalized);
+    try { localStorage.setItem('qaaf_branding_cache', JSON.stringify(normalized)); } catch {}
     try {
-      // Use setDoc with merge:false to fully replace — config is always the complete object
-      await setDoc(doc(db, 'branding', 'main'), config);
+      await setDoc(doc(db, 'branding', 'main'), normalized);
     } catch (e) {
       console.error('Failed to save branding to Firestore:', e);
       if (typeof window !== 'undefined') alert('فشل حفظ التغييرات على الخادم. التغييرات مخزّنة محليًا مؤقتاً.');
@@ -1185,6 +1198,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (amount < requiredFee) {
       await updateDoc(doc(db, 'orders', orderId), {
+        status: 'pending',
         paymentStatus: 'pending',
         paymentSenderPhone: sender || targetOrder.phoneNumber,
         shippingFeePaid: false,
@@ -1196,7 +1210,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         matched: true,
         reason: 'amount below required shipping fee',
         orderId,
-        order: targetOrder,
+        order: { ...targetOrder, status: 'pending', paymentStatus: 'pending', shippingFeePaid: false, shippingPaymentNote: input.text || 'الدفع غير مكتمل - المبلغ أقل من قيمة الشحن' },
         approved: false,
         requiredFee,
         amount,
