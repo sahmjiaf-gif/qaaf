@@ -9,10 +9,11 @@ const __dirname = path.dirname(__filename);
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
-    // On GitHub Actions, base must be the repo name for GitHub Pages
+    // Use relative asset paths so the app works reliably on GitHub Pages,
+    // Netlify, and any static hosting root/subfolder without blank-page failures.
     const isGitHubPages = process.env.GITHUB_ACTIONS === 'true';
     return {
-      base: isGitHubPages ? '/qaaf-store/' : '/',
+      base: isGitHubPages ? './' : './',
       server: {
         port: 3000,
         host: '0.0.0.0',
