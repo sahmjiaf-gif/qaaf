@@ -292,7 +292,7 @@ const ProductCard = ({
 
 
 const Home: React.FC = () => {
-  const { branding, orders, products: contextProducts, cart, setCart, addOrder, addToCart, removeFromCart, updateCartQuantity, wishlist, setWishlist, userRating, setUserRating, language, setLanguage, isTranslating, validatePromoCode, appliedPromo, setAppliedPromo, theme, reviews, addReview, initialLoading, createSupportTicket, findPendingOrderMatch, addSupportMessage, closeSupportTicket, staff } = useApp();
+  const { branding, orders, products: contextProducts, cart, setCart, addOrder, addToCart, removeFromCart, updateCartQuantity, wishlist, setWishlist, userRating, setUserRating, language, setLanguage, isTranslating, validatePromoCode, appliedPromo, setAppliedPromo, theme, reviews, addReview, initialLoading, createSupportTicket, findPendingOrderMatch, addSupportMessage, closeSupportTicket, staff, getSupportQueueStatus, validateShippingProof } = useApp();
   const t = (translations as any)[language || 'ar'] || translations.ar;
   const [toast, setToast] = useState<{ show: boolean, message: string }>({ show: false, message: '' });
   const [showCart, setShowCart] = useState(false);
@@ -315,9 +315,11 @@ const Home: React.FC = () => {
   const [lastPlacedOrder, setLastPlacedOrder] = useState<any>(null);
   const [activeInvoiceOrder, setActiveInvoiceOrder] = useState<Order | null>(null);
   const [showBot, setShowBot] = useState(false);
-  const [botStep, setBotStep] = useState<'welcome' | 'name' | 'phone' | 'details' | 'active' | 'closed'>('welcome');
+  const [botStep, setBotStep] = useState<'welcome' | 'name' | 'phone' | 'shipping_question' | 'paid_question' | 'proof' | 'active' | 'closed'>('welcome');
+  const [botIssueType, setBotIssueType] = useState<'shipping' | 'general' | 'unknown'>('unknown');
+  const [botAlreadyPaid, setBotAlreadyPaid] = useState<'yes' | 'no' | 'unknown'>('unknown');
   const [botMessages, setBotMessages] = useState<Array<{ sender: 'bot' | 'user'; text: string }>>([
-    { sender: 'bot', text: 'مرحباً بك في قاف 👋\nأولاً: اكتب اسمك الكامل، ثم رقم التواصل، ثم اشرح طلبك أو أرفق صورة.' }
+    { sender: 'bot', text: 'مرحباً بك في قاف 👋\nأولاً: اكتب اسمك الكامل، ثم رقم التواصل.' }
   ]);
   const [botName, setBotName] = useState('');
   const [botPhone, setBotPhone] = useState('');
@@ -421,7 +423,7 @@ const Home: React.FC = () => {
     reader.onload = () => {
       const result = typeof reader.result === 'string' ? reader.result : null;
       if (result) {
-        if (botStep === 'details') {
+        if (botStep === 'shipping_question' || botStep === 'paid_question' || botStep === 'proof' || botStep === 'details') {
           setBotImage(result);
           setBotMessages(prev => [...prev, { sender: 'user', text: 'تمت إضافة صورة' }]);
         } else {
@@ -458,45 +460,136 @@ const Home: React.FC = () => {
         return;
       }
 
-      setBotStep('details');
-      setBotMessages(prev => [...prev, { sender: 'user', text: botPhone }, { sender: 'bot', text: 'تمام، اكتب تفاصيل الطلب أو أرفق صورة، وسنرسلها مباشرة لخدمة العملاء للمتابعة.' }]);
+      setBotStep('shipping_question');
+      setBotMessages(prev => [...prev, { sender: 'user', text: botPhone }, { sender: 'bot', text: 'هل الرسالة متعلقة بدفع التوصيل أم بشيء آخر؟ اكتب: توصيل / دفع / غير ذلك.' }]);
       return;
     }
 
-    if (botStep === 'details') {
+    if (botStep === 'shipping_question') {
+      const directText = (botDetails || '').trim();
+      if (!directText) {
+        setBotMessages(prev => [...prev, { sender: 'bot', text: 'يرجى الإجابة على السؤال أولاً.' }]);
+        return;
+      }
+
+      const lower = directText.toLowerCase();
+      const isShippingQuestion = /(توصيل|شحن|shipping|delivery|delivery fee|شحنة|دفع التوصيل|دفع الشحن)/i.test(lower) || /(دفع|payment|pay)/i.test(lower) && /(توصيل|شحن|shipping|delivery)/i.test(lower);
+
+      if (!isShippingQuestion) {
+        const cleanPhone = botPhone.replace(/\D/g, '');
+        setBotSubmitting(true);
+        const queueStatus = getSupportQueueStatus();
+        const ticket = await createSupportTicket({
+          customerName: botName.trim(),
+          phone: cleanPhone,
+          message: `الرسالة غير متعلقة بالدفع أو الشحن - ${directText}`,
+          imageUrl: botImage || undefined,
+          messages: [{
+            id: `bot-${Date.now()}`,
+            sender: 'customer',
+            text: directText || 'رسالة مباشرة من البوت',
+            imageUrl: botImage || undefined,
+            createdAt: new Date().toISOString()
+          }]
+        });
+
+        setBotTicketId(ticket?.id || null);
+        const waitingCount = queueStatus.totalWaiting + 1;
+        const supportMessage = ticket
+          ? `تم تحويلك لخدمة العملاء مباشرةً ✅\nعدد الأشخاص أمامك الآن: ${waitingCount}\nسيتم التواصل معك فوراً.`
+          : 'تم تحويلك لخدمة العملاء مباشرةً ✅\nسيتم التواصل معك فوراً.';
+
+        setBotMessages(prev => [...prev, { sender: 'user', text: directText }, { sender: 'bot', text: supportMessage }]);
+        setBotStep('active');
+        setBotSubmitting(false);
+        setBotDetails('');
+        setBotImage(null);
+        return;
+      }
+
+      setBotIssueType('shipping');
+      setBotStep('paid_question');
+      setBotMessages(prev => [...prev, { sender: 'user', text: directText }, { sender: 'bot', text: 'هل قمت بدفع رسوم التوصيل بالفعل؟' }]);
+      setBotDetails('');
+      return;
+    }
+
+    if (botStep === 'paid_question') {
+      const answer = (botDetails || '').trim();
+      if (!answer) {
+        setBotMessages(prev => [...prev, { sender: 'bot', text: 'يرجى الإجابة بنعم أو لا.' }]);
+        return;
+      }
+
+      const lower = answer.toLowerCase();
+      const paid = /(نعم|yes|اه|ok|تم|paid|دفع)/i.test(lower);
+      const notPaid = /(لا|no|ليس|ما|لم|not yet|not)/i.test(lower);
+
+      if (!paid && !notPaid) {
+        setBotMessages(prev => [...prev, { sender: 'bot', text: 'الرجاء الإجابة بنعم أو لا فقط.' }]);
+        return;
+      }
+
+      if (paid) {
+        setBotAlreadyPaid('yes');
+        setBotStep('proof');
+        setBotMessages(prev => [...prev, { sender: 'user', text: answer }, { sender: 'bot', text: 'حسناً، أرسل صورة التحويل وبيانات الطلب أو رقم الطلب، وسنقوم بتأكيد الدفع تلقائياً.' }]);
+        setBotDetails('');
+        return;
+      }
+
+      setBotAlreadyPaid('no');
+      const cleanPhone = botPhone.replace(/\D/g, '');
+      const queueStatus = getSupportQueueStatus();
+      setBotSubmitting(true);
+      const ticket = await createSupportTicket({
+        customerName: botName.trim(),
+        phone: cleanPhone,
+        message: `العميل لم يدفع رسوم التوصيل بعد - تحويل مباشر لخدمة العملاء`,
+        imageUrl: botImage || undefined,
+        messages: [{
+          id: `bot-${Date.now()}`,
+          sender: 'customer',
+          text: 'لم يتم الدفع بعد - تحويل لخدمة العملاء',
+          imageUrl: botImage || undefined,
+          createdAt: new Date().toISOString()
+        }]
+      });
+      setBotTicketId(ticket?.id || null);
+      const waiting = Math.max(queueStatus.totalWaiting + 1, 1);
+      setBotMessages(prev => [...prev, { sender: 'user', text: answer }, { sender: 'bot', text: `تم تحويلك لخدمة العملاء مباشرةً ✅\nعدد الأشخاص أمامك الآن: ${waiting}\nسيتم التواصل معك فوراً.` }]);
+      setBotStep('active');
+      setBotSubmitting(false);
+      setBotDetails('');
+      setBotImage(null);
+      return;
+    }
+
+    if (botStep === 'proof') {
       const trimmedDetails = botDetails.trim();
       if (!trimmedDetails && !botImage) {
-        setBotMessages(prev => [...prev, { sender: 'bot', text: 'يرجى كتابة تفاصيل الطلب أو إرفاق صورة قبل الإرسال.' }]);
+        setBotMessages(prev => [...prev, { sender: 'bot', text: 'يرجى إرفاق صورة التحويل أو كتابة بيانات الطلب قبل الإرسال.' }]);
         return;
       }
 
       setBotSubmitting(true);
       const cleanPhone = botPhone.replace(/\D/g, '');
-      const match = findPendingOrderMatch({ phone: cleanPhone, name: botName.trim(), text: trimmedDetails || `اسم: ${botName.trim()} رقم: ${cleanPhone}` });
-      const ticket = await createSupportTicket({
-        customerName: botName.trim(),
+      const validation = await validateShippingProof({
         phone: cleanPhone,
-        message: trimmedDetails || `طلب من البوت - اسم: ${botName.trim()} - رقم: ${cleanPhone}`,
+        name: botName.trim(),
+        text: trimmedDetails || `اسم: ${botName.trim()}\nرقم: ${cleanPhone}`,
         imageUrl: botImage || undefined,
-        messages: [{
-          id: `bot-${Date.now()}`,
-          sender: 'customer',
-          text: trimmedDetails || `اسم: ${botName.trim()}\nرقم: ${cleanPhone}`,
-          imageUrl: botImage || undefined,
-          createdAt: new Date().toISOString()
-        }]
+        senderPhone: cleanPhone
       });
 
-      setBotTicketId(ticket?.id || null);
+      const finalMessage = validation.approved
+        ? `تم تأكيد الدفع بنجاح ✅\nالمبلغ المدفوع: ${validation.amount ?? 0} جنيه\nتم تفعيل الطلب تلقائياً.`
+        : `تم استلام صورة التحويل ✅\nلكن المبلغ المدفوع (${validation.amount ?? 0}) أقل من رسوم الشحن (${validation.requiredFee ?? 0})\nتم تسجيل ملاحظة على الطلب: الدفع غير مكتمل.`;
+
       setBotMessages(prev => [
         ...prev,
-        { sender: 'user', text: trimmedDetails || (botImage ? 'إرفاق صورة' : 'تم إرسال الطلب') },
-        {
-          sender: 'bot',
-          text: match.matched && ticket
-            ? `تمت مطابقة طلبك بنجاح ✅\nرقم الطلب: ${match.orderId}\nسيتم متابعة الطلب من خدمة العملاء الآن، ويمكنك متابعة المحادثة هنا.`
-            : 'تم حفظ طلبك بنجاح ✅\nخدمة العملاء ستتواصل معك مباشرةً من هنا، ويمكنك متابعة الرسائل في نفس المحادثة.'
-        }
+        { sender: 'user', text: trimmedDetails || (botImage ? 'إرفاق صورة التحويل' : 'تم إرسال تفاصيل الطلب') },
+        { sender: 'bot', text: finalMessage }
       ]);
 
       setBotStep('active');
@@ -530,12 +623,14 @@ const Home: React.FC = () => {
 
     if (botStep === 'closed') {
       setBotStep('welcome');
-      setBotMessages([{ sender: 'bot', text: 'مرحباً بك في قاف 👋\nأولاً: اكتب اسمك الكامل، ثم رقم التواصل، ثم اشرح طلبك أو أرفق صورة.' }]);
+      setBotMessages([{ sender: 'bot', text: 'مرحباً بك في قاف 👋\nأولاً: اكتب اسمك الكامل، ثم رقم التواصل.' }]);
       setBotName('');
       setBotPhone('');
       setBotDetails('');
       setBotImage(null);
       setBotTicketId(null);
+      setBotIssueType('unknown');
+      setBotAlreadyPaid('unknown');
       return;
     }
   };
@@ -1692,7 +1787,7 @@ const Home: React.FC = () => {
               <p className="text-sm text-stone-600">تم إغلاق المحادثة. يمكنك بدء محادثة جديدة.</p>
               <button onClick={() => { setBotStep('welcome'); setBotMessages([{ sender: 'bot', text: 'مرحباً بك في قاف 👋\nأولاً: اكتب اسمك الكامل، ثم رقم التواصل، ثم اشرح طلبك أو أرفق صورة.' }]); setBotName(''); setBotPhone(''); setBotDetails(''); setBotImage(null); setBotTicketId(null); }} className="w-full rounded-2xl bg-[#29130b] text-white py-3 text-sm font-black">ابدأ محادثة جديدة</button>
             </div>
-          ) : botStep !== 'active' && botStep !== 'details' ? (
+          ) : botStep !== 'active' && botStep !== 'shipping_question' && botStep !== 'paid_question' && botStep !== 'proof' && botStep !== 'details' ? (
             <div className="border-t border-stone-200 bg-white p-3 space-y-3">
               {botStep === 'welcome' && (
                 <button onClick={handleBotSubmit} className="w-full rounded-2xl bg-[#29130b] text-white py-3 text-sm font-black">ابدأ المحادثة</button>
@@ -1712,16 +1807,28 @@ const Home: React.FC = () => {
             </div>
           ) : (
             <div className="border-t border-stone-200 bg-white p-3 space-y-3">
-              {botStep === 'details' && (
+              {(botStep === 'shipping_question' || botStep === 'paid_question' || botStep === 'proof') && (
                 <>
-                  <textarea value={botDetails} onChange={(e) => setBotDetails(e.target.value)} rows={3} placeholder="اكتب تفاصيل طلبك هنا..." className="w-full rounded-xl border border-stone-200 px-3 py-2 text-sm outline-none focus:border-[#29130b] resize-none" />
+                  <textarea
+                    value={botDetails}
+                    onChange={(e) => setBotDetails(e.target.value)}
+                    rows={3}
+                    placeholder={
+                      botStep === 'shipping_question'
+                        ? 'اكتب: توصيل / دفع / غير ذلك'
+                        : botStep === 'paid_question'
+                          ? 'اكتب نعم أو لا'
+                          : 'اكتب بيانات الطلب أو ارفق صورة التحويل'
+                    }
+                    className="w-full rounded-xl border border-stone-200 px-3 py-2 text-sm outline-none focus:border-[#29130b] resize-none"
+                  />
                   <div className="flex items-center justify-between gap-2">
                     <label className="flex items-center gap-2 rounded-xl border border-dashed border-stone-300 px-3 py-2 text-xs font-bold text-stone-600 cursor-pointer">
                       <input type="file" accept="image/*" className="hidden" onChange={handleBotImageUpload} />
-                      <span>إرفاق صورة</span>
+                      <span>{botStep === 'proof' ? 'إرفاق صورة التحويل' : 'إرفاق صورة'}</span>
                     </label>
                     <button disabled={botSubmitting} onClick={handleBotSubmit} className="flex-1 rounded-2xl bg-[#c5a059] text-[#29130b] py-2.5 text-sm font-black disabled:opacity-60">
-                      {botSubmitting ? 'جاري الإرسال...' : 'إرسال الطلب'}
+                      {botSubmitting ? 'جاري الإرسال...' : 'إرسال'}
                     </button>
                   </div>
                   {botImage && <img src={botImage} alt="Bot attachment" className="max-h-28 rounded-xl object-contain border border-stone-200" />}

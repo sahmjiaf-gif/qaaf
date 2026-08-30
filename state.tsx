@@ -87,6 +87,7 @@ interface AppContextType {
   closeSupportTicket: (ticketId: string, closedBy?: 'customer' | 'agent' | 'system', note?: string) => Promise<void>;
   getSupportQueueStatus: (ticketId?: string) => { totalWaiting: number; availableStaff: number; queuePosition: number; hasAvailableStaff: boolean; isBusy: boolean; };
   findPendingOrderMatch: (input: { phone?: string; name?: string; text?: string; }) => { orderId?: string; order?: Order; reason: string; matched: boolean; };
+  validateShippingProof: (input: { phone?: string; name?: string; text?: string; imageUrl?: string; orderId?: string; senderPhone?: string; amount?: number; }) => Promise<{ matched: boolean; reason: string; orderId?: string; order?: Order; approved?: boolean; requiredFee?: number; amount?: number; updated: boolean; }>;
   addConsultation: (cons: Consultation) => Promise<void>;
   updateConsultation: (id: string, data: Partial<Consultation>) => Promise<void>;
   updateProductStock: (id: string, data: Partial<Product>) => Promise<void>;
@@ -126,6 +127,14 @@ export interface Consultation {
   createdAt: string;
 }
 
+const normalizeAssetUrl = (value?: string) => {
+  if (!value || value === 'undefined' || value === 'null') return undefined;
+  if (/^https?:\/\//i.test(value) || value.startsWith('data:') || value.startsWith('blob:') || value.startsWith('#')) return value;
+  if (value.startsWith('./') || value.startsWith('../') || value.startsWith('images/') || value.startsWith('public/')) return value;
+  if (value.startsWith('/')) return `.${value}`;
+  return value;
+};
+
 const defaultBranding: BrandingConfig = {
   primaryColor: '#c49a6c',
   secondaryColor: '#ffffff',
@@ -134,7 +143,7 @@ const defaultBranding: BrandingConfig = {
   heroTitle: '',
   heroSubtitle: '',
   heroImage: '',
-  logoImage: '/qaaf-logo.jpg',
+  logoImage: normalizeAssetUrl('/qaaf-logo.jpg') || './qaaf-logo.jpg',
   logoSize: 200,
   aboutTitle: '',
   aboutDescription: '',
@@ -171,7 +180,11 @@ const defaultBranding: BrandingConfig = {
 
 const mergeBrandingConfig = (base: BrandingConfig, incoming?: Partial<BrandingConfig>): BrandingConfig => {
   const next = { ...base, ...(incoming || {}) };
-  if (!incoming?.logoImage) next.logoImage = base.logoImage || '/qaaf-logo.jpg';
+  if (!incoming?.logoImage) {
+    next.logoImage = normalizeAssetUrl(base.logoImage) || normalizeAssetUrl('/qaaf-logo.jpg') || './qaaf-logo.jpg';
+  } else {
+    next.logoImage = normalizeAssetUrl(next.logoImage) || normalizeAssetUrl('/qaaf-logo.jpg') || './qaaf-logo.jpg';
+  }
   if (!incoming?.logoSize) next.logoSize = base.logoSize || 200;
   return next;
 };
@@ -191,7 +204,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const baseBranding: BrandingConfig = {
         ...defaultBranding,
         ...dbData.branding,
-        logoImage: dbData.branding.logoImage || defaultBranding.logoImage || '/qaaf-logo.jpg',
+        logoImage: normalizeAssetUrl(dbData.branding.logoImage) || normalizeAssetUrl(defaultBranding.logoImage) || './qaaf-logo.jpg',
         logoSize: dbData.branding.logoSize || defaultBranding.logoSize || 200,
       };
 
@@ -219,10 +232,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return {
         ...baseBranding,
         ...parsed,
-        logoImage: parsed.logoImage || baseBranding.logoImage,
+        logoImage: normalizeAssetUrl(parsed.logoImage) || normalizeAssetUrl(baseBranding.logoImage) || './qaaf-logo.jpg',
         logoSize: parsed.logoSize || baseBranding.logoSize,
       };
-    } catch { return { ...defaultBranding, ...dbData.branding, logoImage: dbData.branding.logoImage || defaultBranding.logoImage || '/qaaf-logo.jpg', logoSize: dbData.branding.logoSize || defaultBranding.logoSize || 200 }; }
+    } catch { return { ...defaultBranding, ...dbData.branding, logoImage: normalizeAssetUrl(dbData.branding.logoImage) || normalizeAssetUrl(defaultBranding.logoImage) || './qaaf-logo.jpg', logoSize: dbData.branding.logoSize || defaultBranding.logoSize || 200 }; }
   });
   const [firestoreOk, setFirestoreOk] = useState<boolean>(true);
   const [lastRemoteUpdate, setLastRemoteUpdate] = useState<string | null>(null);
@@ -956,19 +969,53 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return messages;
   };
 
+  const normalizePhone = (raw: string) => {
+    if (!raw) return '';
+    let phone = String(raw).replace(/\D/g, '');
+    if (phone.startsWith('00')) phone = phone.slice(2);
+    if (phone.startsWith('966')) phone = phone.slice(3);
+    if (phone.startsWith('2') && phone.length === 12) phone = phone.slice(1);
+    if (phone.startsWith('0') && phone.length === 11) return phone;
+    if (phone.length === 10) return `0${phone}`;
+    return phone;
+  };
+
+  const extractAmountFromText = (value?: string) => {
+    const text = String(value || '').replace(/[،]/g, '').replace(/\s+/g, ' ').trim();
+    if (!text) return 0;
+    const normalized = text.replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d).toString())
+      .replace(/[٫]/g, '.')
+      .replace(/[أا]/g, 'a');
+    const patterns = [
+      /(?:مبلغ|amount|total|القيمة|قيمة|المبلغ|تحويل)[^\d]{0,15}(\d+(?:[.,]\d+)?)/gi,
+      /(\d+(?:[.,]\d+)?)[^\d]{0,8}(?:ج\.م|جنيه|EGP|egp|جنيهات|ج.م)/gi,
+      /(\d+(?:[.,]\d+)?)/g
+    ];
+
+    for (const pattern of patterns) {
+      const match = normalized.match(pattern);
+      if (!match) continue;
+      const candidate = (match[1] || match[0] || match[match.length - 1] || '').replace(/[^0-9.]/g, '');
+      if (!candidate) continue;
+      const parsed = Number(candidate);
+      if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+    return 0;
+  };
+
   const findPendingOrderMatch = (input: { phone?: string; name?: string; text?: string; }) => {
-    const cleanPhone = (input.phone || '').replace(/\D/g, '');
+    const cleanPhone = normalizePhone(input.phone || '');
     const cleanName = (input.name || '').trim().toLowerCase();
     const text = (input.text || '').trim();
 
     const match = orders.find(order => {
-      const orderPhone = String(order.phoneNumber || '').replace(/\D/g, '');
-      const paymentPhone = String(order.paymentSenderPhone || '').replace(/\D/g, '');
+      const orderPhone = normalizePhone(String(order.phoneNumber || ''));
+      const paymentPhone = normalizePhone(String(order.paymentSenderPhone || ''));
       const orderName = String(order.customerName || '').trim().toLowerCase();
       const pending = String(order.status || '').toLowerCase() === 'pending';
       const samePhone = !!cleanPhone && (orderPhone.includes(cleanPhone) || paymentPhone.includes(cleanPhone) || cleanPhone.includes(orderPhone) || cleanPhone.includes(paymentPhone));
       const sameName = !!cleanName && (orderName.includes(cleanName) || cleanName.includes(orderName));
-      const textMentions = !!text && (orderPhone.includes(text) || orderName.includes(text.toLowerCase()));
+      const textMentions = !!text && (orderPhone.includes(text) || orderName.includes(text.toLowerCase()) || (text.toLowerCase().includes(orderName) && orderName));
       return pending && (samePhone || sameName || textMentions);
     });
 
@@ -977,6 +1024,64 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     return { reason: 'no pending order matched', matched: false };
+  };
+
+  const validateShippingProof = async (input: { phone?: string; name?: string; text?: string; imageUrl?: string; orderId?: string; senderPhone?: string; amount?: number; }) => {
+    const fallbackOrderMatch = input.orderId ? orders.find(order => order.id === input.orderId) : findPendingOrderMatch({ phone: input.phone, name: input.name, text: input.text });
+    const targetOrder = fallbackOrderMatch && 'order' in fallbackOrderMatch ? fallbackOrderMatch.order : fallbackOrderMatch;
+
+    if (!targetOrder) {
+      return { matched: false, reason: 'no pending order matched', updated: false };
+    }
+
+    const requiredFee = Number(targetOrder.shippingFee || 0);
+    const sender = normalizePhone(input.senderPhone || input.phone || '');
+    const extractedAmount = typeof input.amount === 'number' ? input.amount : extractAmountFromText(input.text || '');
+    const amount = Number(extractedAmount || 0);
+
+    const orderId = targetOrder.id;
+
+    if (amount < requiredFee) {
+      await updateDoc(doc(db, 'orders', orderId), {
+        paymentStatus: 'pending',
+        paymentSenderPhone: sender || targetOrder.phoneNumber,
+        shippingFeePaid: false,
+        shippingPaymentNote: input.text || 'الدفع غير مكتمل - المبلغ أقل من قيمة الشحن',
+        lastSmsCheckAt: new Date().toISOString()
+      });
+
+      return {
+        matched: true,
+        reason: 'amount below required shipping fee',
+        orderId,
+        order: targetOrder,
+        approved: false,
+        requiredFee,
+        amount,
+        updated: true
+      };
+    }
+
+    await updateDoc(doc(db, 'orders', orderId), {
+      status: 'approved',
+      paymentStatus: 'confirmed',
+      paymentSenderPhone: sender || targetOrder.phoneNumber,
+      shippingFeePaid: true,
+      shippingPaymentNote: input.text || 'تم تأكيد الدفع ودفع قيمة الشحن بنجاح',
+      lastSmsCheckAt: new Date().toISOString(),
+      lastWaStatusNotified: 'approved'
+    });
+
+    return {
+      matched: true,
+      reason: 'shipping fee matched or exceeded; order unlocked',
+      orderId,
+      order: targetOrder,
+      approved: true,
+      requiredFee,
+      amount,
+      updated: true
+    };
   };
 
   const createSupportTicket = async (ticket: Omit<SupportTicket, 'id' | 'createdAt' | 'updatedAt' | 'status' | 'messages'> & { message: string; imageUrl?: string; messages?: SupportMessage[]; }) => {
@@ -1374,7 +1479,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       customers, setCustomers: setCustomersState,
       consultations, setConsultations: setConsultationsState,
       supportTickets, setSupportTickets: setSupportTicketsState,
-      createSupportTicket, addSupportMessage, assignSupportTicket, resolveSupportTicket, closeSupportTicket, getSupportQueueStatus, findPendingOrderMatch,
+      createSupportTicket, addSupportMessage, assignSupportTicket, resolveSupportTicket, closeSupportTicket, getSupportQueueStatus, findPendingOrderMatch, validateShippingProof,
       manufacturingRequests, setManufacturingRequests: setManufacturingRequestsState,
       staff, setStaff: setStaffState,
       addStaff, updateStaff, deleteStaff,
