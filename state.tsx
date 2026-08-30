@@ -263,7 +263,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [currentStaff, setCurrentStaffState] = useState<StaffMember | null>(() => {
     try {
       const saved = localStorage.getItem('qaaf_current_staff');
-      return saved ? JSON.parse(saved) : null;
+      if (!saved) return null;
+      const parsed = JSON.parse(saved);
+      if (!parsed || typeof parsed !== 'object' || !parsed.id) return null;
+      return parsed as StaffMember;
     } catch { return null; }
   });
 

@@ -8,7 +8,8 @@ export const GlobalPresenceManager: React.FC = () => {
   const { currentStaff } = useApp();
 
   useEffect(() => {
-    if (!currentStaff) return;
+    if (!currentStaff || !currentStaff.id) return;
+    if (!db || !rdb) return;
 
     const staffRef = doc(db, 'staff', currentStaff.id);
     const presenceRef = rdbRef(rdb, `presence/${currentStaff.id}`);
@@ -30,16 +31,20 @@ export const GlobalPresenceManager: React.FC = () => {
       const now = new Date().toISOString();
       // RTDB presence update (fast, reliable with onDisconnect)
       try {
-        rdbSet(presenceRef, { isOnline: true, lastActive: now, userAgent: navigator.userAgent });
-        // ensure onDisconnect flips the flag
-        rdbOnDisconnect(presenceRef).set({ isOnline: false, lastActive: now }).catch(() => {});
+        if (rdb && presenceRef) {
+          rdbSet(presenceRef, { isOnline: true, lastActive: now, userAgent: navigator.userAgent });
+          // ensure onDisconnect flips the flag
+          rdbOnDisconnect(presenceRef).set({ isOnline: false, lastActive: now }).catch(() => {});
+        }
       } catch (e) {
         // fallback to Firestore if RTDB fails
       }
-      updateDoc(staffRef, {
-        isOnline: true,
-        lastActive: now
-      }).catch(console.error);
+      if (staffRef) {
+        updateDoc(staffRef, {
+          isOnline: true,
+          lastActive: now
+        }).catch(console.error);
+      }
     };
 
     const markOffline = () => {
@@ -47,12 +52,16 @@ export const GlobalPresenceManager: React.FC = () => {
       lastMarkedOnline = false;
       const now = new Date().toISOString();
       try {
-        rdbSet(presenceRef, { isOnline: false, lastActive: now, userAgent: navigator.userAgent });
+        if (rdb && presenceRef) {
+          rdbSet(presenceRef, { isOnline: false, lastActive: now, userAgent: navigator.userAgent });
+        }
       } catch (e) {}
-      updateDoc(staffRef, {
-        isOnline: false,
-        lastActive: now
-      }).catch(console.error);
+      if (staffRef) {
+        updateDoc(staffRef, {
+          isOnline: false,
+          lastActive: now
+        }).catch(console.error);
+      }
     };
 
     // ─── Full attendance calculation (async, runs in background) ─────
