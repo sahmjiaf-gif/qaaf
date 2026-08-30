@@ -134,8 +134,8 @@ const defaultBranding: BrandingConfig = {
   heroTitle: '',
   heroSubtitle: '',
   heroImage: '',
-  logoImage: '',
-  logoSize: 100,
+  logoImage: '/qaaf-logo.jpg',
+  logoSize: 200,
   aboutTitle: '',
   aboutDescription: '',
   aboutImage: '',
@@ -169,6 +169,13 @@ const defaultBranding: BrandingConfig = {
   categories: []
 };
 
+const mergeBrandingConfig = (base: BrandingConfig, incoming?: Partial<BrandingConfig>): BrandingConfig => {
+  const next = { ...base, ...(incoming || {}) };
+  if (!incoming?.logoImage) next.logoImage = base.logoImage || '/qaaf-logo.jpg';
+  if (!incoming?.logoSize) next.logoSize = base.logoSize || 200;
+  return next;
+};
+
 const defaultAdmin: AdminCredentials = {
   username: 'admin',
   password: '123',
@@ -181,6 +188,13 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [branding, setBrandingState] = useState<BrandingConfig>(() => {
     try {
+      const baseBranding: BrandingConfig = {
+        ...defaultBranding,
+        ...dbData.branding,
+        logoImage: dbData.branding.logoImage || defaultBranding.logoImage || '/qaaf-logo.jpg',
+        logoSize: dbData.branding.logoSize || defaultBranding.logoSize || 200,
+      };
+
       // Force clear old caches to show QAAF clothing brand
       const qaafCacheVersion = localStorage.getItem('qaaf_clothing_cache_v3');
       if (!qaafCacheVersion) {
@@ -192,11 +206,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         localStorage.removeItem('qaaf_branding_cache');
         localStorage.removeItem('qaaf_products_cache');
         localStorage.setItem('qaaf_clothing_cache_v3', 'true');
-        return { ...defaultBranding, ...dbData.branding };
+        localStorage.setItem('qaaf_branding_cache', JSON.stringify(baseBranding));
+        return baseBranding;
       }
       const saved = localStorage.getItem('qaaf_branding_cache');
-      return saved ? { ...defaultBranding, ...dbData.branding, ...JSON.parse(saved) } : { ...defaultBranding, ...dbData.branding };
-    } catch { return { ...defaultBranding, ...dbData.branding }; }
+      if (!saved) {
+        localStorage.setItem('qaaf_branding_cache', JSON.stringify(baseBranding));
+        return baseBranding;
+      }
+
+      const parsed = JSON.parse(saved) as Partial<BrandingConfig>;
+      return {
+        ...baseBranding,
+        ...parsed,
+        logoImage: parsed.logoImage || baseBranding.logoImage,
+        logoSize: parsed.logoSize || baseBranding.logoSize,
+      };
+    } catch { return { ...defaultBranding, ...dbData.branding, logoImage: dbData.branding.logoImage || defaultBranding.logoImage || '/qaaf-logo.jpg', logoSize: dbData.branding.logoSize || defaultBranding.logoSize || 200 }; }
   });
   const [firestoreOk, setFirestoreOk] = useState<boolean>(true);
   const [lastRemoteUpdate, setLastRemoteUpdate] = useState<string | null>(null);
@@ -378,9 +404,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setOrdersState(ordersData);
 
         if (brandSnap.exists()) {
-          const config = brandSnap.data() as BrandingConfig;
+          const config = brandSnap.data() as Partial<BrandingConfig>;
           setBrandingState(prev => {
-            const merged = { ...prev, ...config };
+            const merged = mergeBrandingConfig(prev, config);
             if (config.categories === undefined && prev.categories) merged.categories = prev.categories;
             if (config.offers === undefined && prev.offers) merged.offers = prev.offers;
             if (config.slider === undefined && prev.slider) merged.slider = prev.slider;
@@ -389,7 +415,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           });
         } else {
           try {
-            const initialBrand = dbData.branding || defaultBranding;
+            const initialBrand = mergeBrandingConfig({ ...defaultBranding, ...dbData.branding }, dbData.branding);
             await setDoc(doc(db, 'branding', 'main'), initialBrand);
             setBrandingState(initialBrand);
             try { localStorage.setItem('qaaf_branding_cache', JSON.stringify(initialBrand)); } catch {}
@@ -414,7 +440,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           if (snapshot.exists()) {
             const config = snapshot.data() as Partial<BrandingConfig>;
             setBrandingState(prev => {
-              const next = { ...prev, ...config };
+              const next = mergeBrandingConfig(prev, config);
               if (config.categories === undefined && prev.categories) next.categories = prev.categories;
               if (config.offers === undefined && prev.offers) next.offers = prev.offers;
               if (config.slider === undefined && prev.slider) next.slider = prev.slider;

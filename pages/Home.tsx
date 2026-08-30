@@ -42,8 +42,13 @@ const Logo = ({ className = "", variant = "auto" }: { className?: string, varian
 
   if (branding?.logoImage) {
     return (
-      <div className={`flex items-center justify-center ${className} animate-float-luxury`}>
-        <img src={branding.logoImage} alt="Logo" style={{ height: `clamp(${(branding.logoSize || 100) * 0.35}px, 8vw, ${(branding.logoSize || 100) * 0.48}px)` }} className="w-auto object-contain drop-shadow-[0_0_15px_rgba(197,160,89,0.3)]" />
+      <div className={`flex items-center justify-center ${className}`}>
+        <img
+          src={branding.logoImage}
+          alt="Logo"
+          style={{ width: `clamp(${(branding.logoSize || 100) * 0.7}px, 11vw, ${(branding.logoSize || 100) * 1.1}px)`, height: `clamp(${(branding.logoSize || 100) * 0.7}px, 11vw, ${(branding.logoSize || 100) * 1.1}px)` }}
+          className="block rounded-full object-cover"
+        />
       </div>
     );
   }

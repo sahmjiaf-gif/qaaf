@@ -1,0 +1,28 @@
+<svg width="320" height="160" viewBox="0 0 320 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="gold" x1="22" y1="20" x2="292" y2="140" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F4E1A3"/>
+      <stop offset="0.35" stop-color="#D7B86B"/>
+      <stop offset="0.7" stop-color="#B98B3A"/>
+      <stop offset="1" stop-color="#F4E1A3"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="320" height="160" rx="22" fill="transparent"/>
+
+  <g>
+    <circle cx="74" cy="80" r="50" stroke="url(#gold)" stroke-width="2.5"/>
+    <path d="M53 95C59 83 72 77 86 76C80 92 63 99 53 95Z" fill="url(#gold)" opacity="0.9"/>
+    <path d="M49 64C65 52 85 55 96 66C89 74 78 81 60 83C55 76 51 70 49 64Z" fill="url(#gold)" opacity="0.82"/>
+    <path d="M83 46L98 60L87 86H70L83 46Z" fill="url(#gold)" opacity="0.72"/>
+    <path d="M82 40C90 34 99 34 107 41C99 47 92 54 88 60C81 55 79 49 82 40Z" fill="url(#gold)" opacity="0.9"/>
+  </g>
+
+  <g fill="url(#gold)">
+    <text x="160" y="82" text-anchor="middle" font-size="68" font-weight="700" font-family="Georgia, 'Times New Roman', serif" letter-spacing="2">QAAF</text>
+    <text x="160" y="110" text-anchor="middle" font-size="16" font-weight="600" font-family="Arial, sans-serif" letter-spacing="8">BEAUTY HOUSE</text>
+  </g>
+
+  <path d="M115 124H205" stroke="url(#gold)" stroke-width="2" stroke-linecap="round"/>
+  <path d="M95 124C111 120 124 116 136 116C150 116 162 120 177 124" stroke="url(#gold)" stroke-width="2" stroke-linecap="round" opacity="0.8"/>
+</svg>

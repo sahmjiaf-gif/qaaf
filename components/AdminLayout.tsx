@@ -39,7 +39,14 @@ const Logo = ({ className = "" }: { className?: string }) => {
   if (branding?.logoImage) {
     return (
       <div className={`flex items-center justify-center ${className}`}>
-        <img src={branding.logoImage} alt="QAAF Logo" style={{ height: `${(branding.logoSize || 100) * 0.48}px` }} className="w-auto object-contain" />
+        <div className="flex items-center justify-center rounded-full border border-white/20 bg-white/10 shadow-[0_10px_30px_rgba(0,0,0,0.16)] p-1.5">
+          <img
+            src={branding.logoImage}
+            alt="QAAF Logo"
+            style={{ width: `${Math.max(72, (branding.logoSize || 100) * 0.9)}px`, height: `${Math.max(72, (branding.logoSize || 100) * 0.9)}px` }}
+            className="rounded-full object-cover block"
+          />
+        </div>
       </div>
     );
   }

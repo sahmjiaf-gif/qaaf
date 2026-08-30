@@ -136,7 +136,11 @@ const Invoice: React.FC<InvoiceProps> = ({ order, onClose, initialAction }) => {
         <div className={`flex flex-col md:flex-row justify-between items-start md:items-center gap-6 ${getHeaderBorderClass()}`}>
           <div className="space-y-1">
             {branding?.logoImage ? (
-              <img src={branding.logoImage} alt="Logo" style={{ height: `${(branding.logoSize || 100) * 0.48}px` }} className="w-auto object-contain" />
+              <div className="flex items-center justify-center">
+                <div className="flex items-center justify-center rounded-full border border-gray-200 bg-white shadow-[0_10px_20px_rgba(0,0,0,0.08)] p-1.5">
+                  <img src={branding.logoImage} alt="Logo" style={{ width: `${Math.max(54, (branding.logoSize || 100) * 0.7)}px`, height: `${Math.max(54, (branding.logoSize || 100) * 0.7)}px` }} className="rounded-full object-cover block" />
+                </div>
+              </div>
             ) : (
               <div className="flex flex-col leading-none">
                 <div className="relative inline-block">

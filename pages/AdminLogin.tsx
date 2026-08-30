@@ -76,7 +76,11 @@ const AdminLogin: React.FC = () => {
         {/* Logo */}
         <div className="text-center mb-5">
           {branding?.logoImage ? (
-            <img src={branding.logoImage} alt="Logo" className="h-10 w-auto mx-auto mb-3 object-contain" />
+            <div className="flex items-center justify-center mb-3">
+              <div className="flex items-center justify-center rounded-full border border-white/20 bg-white/10 shadow-[0_10px_25px_rgba(0,0,0,0.18)] p-1.5">
+                <img src={branding.logoImage} alt="Logo" className="h-20 w-20 rounded-full object-cover" />
+              </div>
+            </div>
           ) : (
             <div className="inline-flex flex-col items-center justify-center px-5 py-2 mb-3 rounded-xl border border-amber-500/30 bg-gradient-to-b from-[#3a080f] to-[#1a0307]">
               <span className="text-xl font-serif tracking-widest text-[#f3efe9]" style={{ fontFamily: "'Cormorant Garamond', serif" }}>QAAF</span>

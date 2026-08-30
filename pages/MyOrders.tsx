@@ -13,7 +13,14 @@ const Logo = ({ className = "" }: { className?: string }) => {
   if (branding?.logoImage) {
     return (
       <div className={`flex items-center justify-center ${className}`}>
-        <img src={branding.logoImage} alt="QAAF Logo" style={{ height: `clamp(${(branding.logoSize || 100) * 0.35}px, 8vw, ${(branding.logoSize || 100) * 0.48}px)` }} className="w-auto object-contain" />
+        <div className="flex items-center justify-center rounded-full border border-gray-200 bg-white shadow-[0_10px_25px_rgba(0,0,0,0.08)] p-1.5">
+          <img
+            src={branding.logoImage}
+            alt="QAAF Logo"
+            style={{ width: `clamp(${(branding.logoSize || 100) * 0.7}px, 11vw, ${(branding.logoSize || 100) * 1.1}px)`, height: `clamp(${(branding.logoSize || 100) * 0.7}px, 11vw, ${(branding.logoSize || 100) * 1.1}px)` }}
+            className="rounded-full object-cover block"
+          />
+        </div>
       </div>
     );
   }
