@@ -393,6 +393,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const findExistingSupportTicketForPhone = async (phone: string): Promise<SupportTicket | null> => {
+    const cleanPhone = (phone || '').replace(/\D/g, '');
+    if (!cleanPhone) return null;
+
+    try {
+      const q = query(collection(db, 'support_tickets'), where('phone', '==', cleanPhone));
+      const snapshot = await getDocs(q);
+      const matches = snapshot.docs
+        .map(doc => normalizeSupportTicket({ id: doc.id, ...doc.data() }))
+        .filter(ticket => !ticket.isClosed && ticket.phone === cleanPhone)
+        .sort((a, b) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime());
+
+      if (matches.length > 0) {
+        setSupportTicketsState(prev => mergeSupportTickets(prev, matches));
+        return matches[0];
+      }
+    } catch (error) {
+      console.warn('Failed to query existing support ticket by phone:', error);
+    }
+
+    return supportTickets.find(ticket => ticket.phone === cleanPhone && !ticket.isClosed) || null;
+  };
+
   const setIsLoggedIn = (val: boolean) => {
     setIsLoggedInState(val);
     try {
@@ -1165,6 +1188,47 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const createSupportTicket = async (ticket: Omit<SupportTicket, 'id' | 'createdAt' | 'updatedAt' | 'status' | 'messages'> & { message: string; imageUrl?: string; messages?: SupportMessage[]; }) => {
     const now = new Date().toISOString();
+    const cleanPhone = (ticket.phone || '').replace(/\D/g, '');
+    const existingTicket = cleanPhone ? await findExistingSupportTicketForPhone(cleanPhone) : null;
+
+    if (existingTicket && !existingTicket.isClosed) {
+      const mergedTicket = {
+        ...existingTicket,
+        message: ticket.message || existingTicket.message,
+        imageUrl: ticket.imageUrl || existingTicket.imageUrl,
+        updatedAt: now,
+        messages: [...(existingTicket.messages || []), ...((ticket.messages && ticket.messages.length > 0) ? ticket.messages : [{
+          id: `msg-${Date.now()}-customer`,
+          sender: 'customer',
+          text: ticket.message,
+          imageUrl: ticket.imageUrl,
+          createdAt: now
+        }])]
+      };
+
+      const dedupedMessages = Array.from(new Map((mergedTicket.messages || []).map(msg => [msg.id || `${msg.sender}:${msg.text}:${msg.createdAt}`, msg])).values());
+      const mergedDoc = { ...normalizeSupportTicket(mergedTicket), messages: dedupedMessages };
+
+      try {
+        await setDoc(doc(db, 'support_tickets', existingTicket.id), {
+          ...mergedDoc,
+          isOpen: true,
+          isClosed: false,
+          phone: cleanPhone,
+          updatedAt: now
+        }, { merge: true });
+      } catch (e) {
+        console.error('Failed to update existing support ticket on remote:', e);
+      }
+
+      setSupportTicketsState(prev => {
+        const next = mergeSupportTickets(prev, [mergedDoc]);
+        try { localStorage.setItem('qaaf_support_tickets', JSON.stringify(next)); } catch {}
+        return next;
+      });
+      return mergedDoc;
+    }
+
     const lookup = findPendingOrderMatch({ phone: ticket.phone, name: ticket.customerName, text: ticket.message });
     const queueStatus = getSupportQueueStatus();
     const availableSupportStaff = staff.filter(member => member.isOnline && (member.permissions.includes('support' as any) || member.permissions.includes('orders' as any) || member.permissions.includes('consultations' as any)));
@@ -1187,7 +1251,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const supportTicket: SupportTicket = {
       id: `support-${Date.now()}`,
       customerName: ticket.customerName,
-      phone: ticket.phone,
+      phone: cleanPhone,
       message: ticket.message,
       imageUrl: ticket.imageUrl,
       status: assignedSupportStaff ? 'assigned' : 'waiting',
@@ -1229,7 +1293,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         createdAt: supportTicket.createdAt,
         updatedAt: supportTicket.updatedAt,
         messages: supportTicket.messages || []
-      });
+      }, { merge: true });
       await syncSupportTicketsFromRemote();
     } catch (e) {
       console.error('Failed to persist support ticket:', e);
@@ -1320,7 +1384,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     try {
-      await updateDoc(ticketRef, updateData);
+      await setDoc(ticketRef, {
+        ...((ticket || normalizeSupportTicket({ id: ticketId }, ticketId))),
+        ...updateData,
+        updatedAt: now,
+        isOpen: true,
+        isClosed: false,
+        messages: [...((ticket?.messages || []).filter(Boolean)), msg],
+      }, { merge: true });
       const updatedTicket = {
         ...(ticket || normalizeSupportTicket({ id: ticketId, ...((supportTickets.find(item => item.id === ticketId) || {})) }, ticketId)),
         status: nextStatus,
