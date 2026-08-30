@@ -292,7 +292,7 @@ const ProductCard = ({
 
 
 const Home: React.FC = () => {
-  const { branding, orders, products: contextProducts, cart, setCart, addOrder, addToCart, removeFromCart, updateCartQuantity, wishlist, setWishlist, userRating, setUserRating, language, setLanguage, isTranslating, validatePromoCode, appliedPromo, setAppliedPromo, theme, reviews, addReview, initialLoading, createSupportTicket, findPendingOrderMatch, addSupportMessage, closeSupportTicket, staff, getSupportQueueStatus, validateShippingProof } = useApp();
+  const { branding, orders, products: contextProducts, cart, setCart, addOrder, addToCart, removeFromCart, updateCartQuantity, wishlist, setWishlist, userRating, setUserRating, language, setLanguage, isTranslating, validatePromoCode, appliedPromo, setAppliedPromo, theme, reviews, addReview, initialLoading, createSupportTicket, findPendingOrderMatch, addSupportMessage, closeSupportTicket, staff, getSupportQueueStatus, validateShippingProof, supportTickets } = useApp();
   const t = (translations as any)[language || 'ar'] || translations.ar;
   const [toast, setToast] = useState<{ show: boolean, message: string }>({ show: false, message: '' });
   const [showCart, setShowCart] = useState(false);
@@ -327,6 +327,32 @@ const Home: React.FC = () => {
   const [botImage, setBotImage] = useState<string | null>(null);
   const [botTicketId, setBotTicketId] = useState<string | null>(null);
   const [botSubmitting, setBotSubmitting] = useState(false);
+
+  useEffect(() => {
+    const phone = botPhone.replace(/\D/g, '');
+    const matchingTicket = supportTickets.find(ticket => {
+      if (botTicketId && ticket.id === botTicketId) return true;
+      if (!phone) return false;
+      return ticket.phone === phone && !ticket.isClosed;
+    });
+
+    if (matchingTicket && matchingTicket.id !== botTicketId) {
+      setBotTicketId(matchingTicket.id);
+    }
+
+    if (matchingTicket && matchingTicket.messages?.length) {
+      const remoteMessages = matchingTicket.messages.map(message => ({
+        sender: message.sender === 'customer' ? 'user' : 'bot',
+        text: message.text
+      }));
+
+      setBotMessages(prev => {
+        const prevTextSet = new Set(prev.map(item => `${item.sender}:${item.text}`));
+        const newMessages = remoteMessages.filter(item => !prevTextSet.has(`${item.sender}:${item.text}`));
+        return newMessages.length ? [...prev, ...newMessages] : prev;
+      });
+    }
+  }, [supportTickets, botPhone, botTicketId]);
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 50);
