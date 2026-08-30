@@ -304,37 +304,88 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch { return []; }
   });
 
+  const normalizeSupportTicket = (data: any, fallbackId?: string): SupportTicket => {
+    const messages = Array.isArray(data?.messages) ? data.messages.map((item: any, index: number) => ({
+      id: item?.id || `msg-${fallbackId || 'ticket'}-${index}-${Date.now()}`,
+      sender: item?.sender || 'system',
+      text: item?.text || '',
+      imageUrl: item?.imageUrl || null,
+      createdAt: item?.createdAt || new Date().toISOString(),
+    })) : [];
+
+    return {
+      id: data?.id || fallbackId || `support-${Date.now()}`,
+      customerName: data?.customerName || data?.customer_name || '',
+      phone: data?.phone || '',
+      message: data?.message || '',
+      imageUrl: data?.imageUrl || null,
+      status: data?.status || 'new',
+      isOpen: data?.isOpen ?? true,
+      isClosed: data?.isClosed ?? false,
+      closedBy: data?.closedBy || null,
+      assignedStaffId: data?.assignedStaffId || undefined,
+      orderId: data?.orderId || null,
+      orderMatch: data?.orderMatch || 'none',
+      customerIntent: data?.customerIntent || 'general',
+      botStep: data?.botStep || 'ask_shipping_fee',
+      queuePosition: data?.queuePosition || 0,
+      waitingCount: data?.waitingCount || 0,
+      availableStaffCount: data?.availableStaffCount || 0,
+      createdAt: data?.createdAt || new Date().toISOString(),
+      updatedAt: data?.updatedAt || data?.createdAt || new Date().toISOString(),
+      messages,
+    } as SupportTicket;
+  };
+
+  const mergeSupportTickets = (current: SupportTicket[], incoming: SupportTicket[]) => {
+    const map = new Map<string, SupportTicket>();
+
+    current.forEach(ticket => map.set(ticket.id, ticket));
+    incoming.forEach(ticket => {
+      const existing = map.get(ticket.id);
+      if (!existing) {
+        map.set(ticket.id, ticket);
+        return;
+      }
+
+      const mergedMessages = [...(existing.messages || []), ...(ticket.messages || [])];
+      const seen = new Set<string>();
+      const dedupedMessages = mergedMessages.filter(item => {
+        if (!item?.id) return false;
+        if (seen.has(item.id)) return false;
+        seen.add(item.id);
+        return true;
+      });
+
+      const existingTime = new Date(existing.updatedAt || existing.createdAt).getTime();
+      const incomingTime = new Date(ticket.updatedAt || ticket.createdAt).getTime();
+      const newest = incomingTime >= existingTime ? ticket : existing;
+
+      map.set(ticket.id, {
+        ...existing,
+        ...ticket,
+        ...newest,
+        messages: dedupedMessages.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
+        updatedAt: newest.updatedAt || existing.updatedAt || ticket.updatedAt,
+      });
+    });
+
+    return [...map.values()].sort((a, b) => {
+      const aTime = Number.isNaN(new Date(a.updatedAt).getTime()) ? 0 : new Date(a.updatedAt).getTime();
+      const bTime = Number.isNaN(new Date(b.updatedAt).getTime()) ? 0 : new Date(b.updatedAt).getTime();
+      return bTime - aTime;
+    });
+  };
+
   const syncSupportTicketsFromRemote = async () => {
     try {
       const snapshot = await getDocs(collection(db, 'support_tickets'));
-      const tickets = snapshot.docs.map(doc => {
-        const data = doc.data() as any;
-        return {
-          id: doc.id,
-          customerName: data.customerName || '',
-          phone: data.phone || '',
-          message: data.message || '',
-          imageUrl: data.imageUrl || null,
-          status: data.status || 'new',
-          isOpen: data.isOpen ?? true,
-          isClosed: data.isClosed ?? false,
-          closedBy: data.closedBy || null,
-          assignedStaffId: data.assignedStaffId || undefined,
-          orderId: data.orderId || null,
-          orderMatch: data.orderMatch || 'none',
-          customerIntent: data.customerIntent || 'general',
-          botStep: data.botStep || 'ask_shipping_fee',
-          queuePosition: data.queuePosition || 0,
-          waitingCount: data.waitingCount || 0,
-          availableStaffCount: data.availableStaffCount || 0,
-          createdAt: data.createdAt || new Date().toISOString(),
-          updatedAt: data.updatedAt || data.createdAt || new Date().toISOString(),
-          messages: (data.messages || []) as SupportMessage[]
-        } as SupportTicket;
-      }).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-
-      setSupportTicketsState(tickets);
-      try { localStorage.setItem('qaaf_support_tickets', JSON.stringify(tickets)); } catch {}
+      const tickets = snapshot.docs.map(doc => normalizeSupportTicket({ id: doc.id, ...doc.data() }));
+      setSupportTicketsState(prev => {
+        const merged = mergeSupportTickets(prev, tickets);
+        try { localStorage.setItem('qaaf_support_tickets', JSON.stringify(merged)); } catch {}
+        return merged;
+      });
       return tickets;
     } catch (error) {
       console.error('Failed to sync support tickets from Firestore:', error);
@@ -542,28 +593,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         });
 
         onSnapshot(collection(db, 'support_tickets'), (snapshot) => {
-          const tickets = snapshot.docs.map(doc => {
-            const data = doc.data() as any;
-            return {
-              id: doc.id,
-              customerName: data.customerName,
-              phone: data.phone,
-              message: data.message,
-              imageUrl: data.imageUrl || null,
-              status: data.status || 'new',
-              isOpen: data.isOpen ?? true,
-              isClosed: data.isClosed ?? false,
-              closedBy: data.closedBy || null,
-              assignedStaffId: data.assignedStaffId || undefined,
-              orderId: data.orderId || null,
-              orderMatch: data.orderMatch || 'none',
-              createdAt: data.createdAt,
-              updatedAt: data.updatedAt,
-              messages: (data.messages || []) as SupportMessage[]
-            } as SupportTicket;
-          }).sort((a,b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-          setSupportTicketsState(tickets);
-          try { localStorage.setItem('qaaf_support_tickets', JSON.stringify(tickets)); } catch {}
+          const tickets = snapshot.docs.map(doc => normalizeSupportTicket({ id: doc.id, ...doc.data() }));
+          setSupportTicketsState(prev => {
+            const merged = mergeSupportTickets(prev, tickets);
+            try { localStorage.setItem('qaaf_support_tickets', JSON.stringify(merged)); } catch {}
+            return merged;
+          });
         }, (error) => {
           console.error('Support tickets listener failed:', error);
           syncSupportTicketsFromRemote();
@@ -1200,10 +1235,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.error('Failed to persist support ticket:', e);
     }
 
-    // Optimistic local update; real source of truth will be Firestore onSnapshot
-    const next = [supportTicket, ...supportTickets];
-    setSupportTicketsState(next);
-    try { localStorage.setItem('qaaf_support_tickets', JSON.stringify(next)); } catch {}
+    setSupportTicketsState(prev => {
+      const next = mergeSupportTickets(prev, [supportTicket]);
+      try { localStorage.setItem('qaaf_support_tickets', JSON.stringify(next)); } catch {}
+      return next;
+    });
     return supportTicket;
   };
 
@@ -1285,45 +1321,60 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     try {
       await updateDoc(ticketRef, updateData);
+      const updatedTicket = {
+        ...(ticket || normalizeSupportTicket({ id: ticketId, ...((supportTickets.find(item => item.id === ticketId) || {})) }, ticketId)),
+        status: nextStatus,
+        botStep: nextBotStep,
+        customerIntent: nextCustomerIntent,
+        updatedAt: now,
+        messages: [...((ticket?.messages || []).filter(Boolean)), msg],
+      };
+      setSupportTicketsState(prev => {
+        const next = mergeSupportTickets(prev, [updatedTicket]);
+        try { localStorage.setItem('qaaf_support_tickets', JSON.stringify(next)); } catch {}
+        return next;
+      });
       await syncSupportTicketsFromRemote();
     } catch (e) {
-      // Fallback to local update if remote fails
       console.error('Failed to write support message to remote DB:', e);
-      const next: SupportTicket[] = supportTickets.map(item => {
-        if (item.id !== ticketId) return item;
-        return {
-          ...item,
-          isOpen: !item.isClosed,
-          isClosed: !!item.isClosed,
-          status: nextStatus,
-          botStep: nextBotStep,
-          customerIntent: nextCustomerIntent,
-          messages: [...item.messages, msg],
-          updatedAt: now,
-        };
+      const fallbackTicket = {
+        ...(ticket || normalizeSupportTicket({ id: ticketId }, ticketId)),
+        isOpen: !ticket?.isClosed,
+        isClosed: !!ticket?.isClosed,
+        status: nextStatus,
+        botStep: nextBotStep,
+        customerIntent: nextCustomerIntent,
+        messages: [...((ticket?.messages || [])), msg],
+        updatedAt: now,
+      } as SupportTicket;
+      setSupportTicketsState(prev => {
+        const next = mergeSupportTickets(prev, [fallbackTicket]);
+        try { localStorage.setItem('qaaf_support_tickets', JSON.stringify(next)); } catch {}
+        return next;
       });
-      setSupportTicketsState(next);
-      try { localStorage.setItem('qaaf_support_tickets', JSON.stringify(next)); } catch {}
       return;
     }
-    // optimistic local update will be replaced by onSnapshot listener
   };
 
   const assignSupportTicket = async (ticketId: string, staffId: string) => {
     const updatedAt = new Date().toISOString();
-    const next: SupportTicket[] = supportTickets.map(ticket => ticket.id === ticketId ? {
-      ...ticket,
+    const nextTicket = {
+      ...(supportTickets.find(ticket => ticket.id === ticketId) || normalizeSupportTicket({ id: ticketId }, ticketId)),
       assignedStaffId: staffId,
       status: 'assigned',
-      isOpen: !ticket.isClosed,
-      isClosed: !!ticket.isClosed,
+      isOpen: true,
+      isClosed: false,
       queuePosition: 0,
       waitingCount: 0,
       availableStaffCount: staff.filter(member => member.isOnline && (member.permissions.includes('support' as any) || member.permissions.includes('orders' as any) || member.permissions.includes('consultations' as any))).length,
       updatedAt
-    } : ticket);
-    setSupportTicketsState(next);
-    try { localStorage.setItem('qaaf_support_tickets', JSON.stringify(next)); } catch {}
+    } as SupportTicket;
+
+    setSupportTicketsState(prev => {
+      const next = mergeSupportTickets(prev, [nextTicket]);
+      try { localStorage.setItem('qaaf_support_tickets', JSON.stringify(next)); } catch {}
+      return next;
+    });
 
     try {
       await updateDoc(doc(db, 'support_tickets', ticketId), {
@@ -1332,7 +1383,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         queuePosition: 0,
         waitingCount: 0,
         availableStaffCount: staff.filter(member => member.isOnline && (member.permissions.includes('support' as any) || member.permissions.includes('orders' as any) || member.permissions.includes('consultations' as any))).length,
-        updatedAt
+        updatedAt,
+        isOpen: true,
+        isClosed: false,
       });
       await syncSupportTicketsFromRemote();
     } catch (e) {
@@ -1342,9 +1395,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const resolveSupportTicket = async (ticketId: string, note?: string) => {
     const updatedAt = new Date().toISOString();
-    const next: SupportTicket[] = supportTickets.map(ticket => ticket.id === ticketId ? { ...ticket, status: 'resolved', isOpen: false, isClosed: true, closedBy: 'agent', queuePosition: 0, waitingCount: 0, updatedAt, messages: [...ticket.messages, { id: `msg-${Date.now()}`, sender: 'system', text: note || 'تم حل الطلب / إغلاق التذكرة', createdAt: new Date().toISOString() }] } as SupportTicket : ticket);
-    setSupportTicketsState(next);
-    try { localStorage.setItem('qaaf_support_tickets', JSON.stringify(next)); } catch {}
+    const ticket = supportTickets.find(item => item.id === ticketId) || normalizeSupportTicket({ id: ticketId }, ticketId);
+    const nextTicket = {
+      ...ticket,
+      status: 'resolved',
+      isOpen: false,
+      isClosed: true,
+      closedBy: 'agent',
+      queuePosition: 0,
+      waitingCount: 0,
+      updatedAt,
+      messages: [...(ticket.messages || []), { id: `msg-${Date.now()}`, sender: 'system', text: note || 'تم حل الطلب / إغلاق التذكرة', createdAt: new Date().toISOString() }]
+    } as SupportTicket;
+
+    setSupportTicketsState(prev => {
+      const next = mergeSupportTickets(prev, [nextTicket]);
+      try { localStorage.setItem('qaaf_support_tickets', JSON.stringify(next)); } catch {}
+      return next;
+    });
 
     try {
       await updateDoc(doc(db, 'support_tickets', ticketId), {
@@ -1355,7 +1423,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         queuePosition: 0,
         waitingCount: 0,
         updatedAt,
-        messages: [...(supportTickets.find(ticket => ticket.id === ticketId)?.messages || []), { id: `msg-${Date.now()}`, sender: 'system', text: note || 'تم حل الطلب / إغلاق التذكرة', createdAt: new Date().toISOString() }]
+        messages: nextTicket.messages
       });
       await syncSupportTicketsFromRemote();
     } catch (e) {
@@ -1365,26 +1433,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const closeSupportTicket = async (ticketId: string, closedBy: 'customer' | 'agent' | 'system' = 'customer', note?: string) => {
     const updatedAt = new Date().toISOString();
-    const next: SupportTicket[] = supportTickets.map(ticket => {
-      if (ticket.id !== ticketId) return ticket;
-      const closeText = note || (closedBy === 'customer' ? 'تم إغلاق المحادثة من العميل.' : closedBy === 'agent' ? 'تم إغلاق المحادثة من الموظف.' : 'تم إغلاق المحادثة.');
-      return {
-        ...ticket,
-        status: 'resolved',
-        isOpen: false,
-        isClosed: true,
-        closedBy,
-        queuePosition: 0,
-        waitingCount: 0,
-        updatedAt,
-        messages: [...ticket.messages, { id: `msg-${Date.now()}`, sender: 'system', text: closeText, createdAt: new Date().toISOString() }]
-      } as SupportTicket;
+    const ticket = supportTickets.find(item => item.id === ticketId) || normalizeSupportTicket({ id: ticketId }, ticketId);
+    const closeText = note || (closedBy === 'customer' ? 'تم إغلاق المحادثة من العميل.' : closedBy === 'agent' ? 'تم إغلاق المحادثة من الموظف.' : 'تم إغلاق المحادثة.');
+    const nextTicket = {
+      ...ticket,
+      status: 'resolved',
+      isOpen: false,
+      isClosed: true,
+      closedBy,
+      queuePosition: 0,
+      waitingCount: 0,
+      updatedAt,
+      messages: [...(ticket.messages || []), { id: `msg-${Date.now()}`, sender: 'system', text: closeText, createdAt: new Date().toISOString() }]
+    } as SupportTicket;
+
+    setSupportTicketsState(prev => {
+      const next = mergeSupportTickets(prev, [nextTicket]);
+      try { localStorage.setItem('qaaf_support_tickets', JSON.stringify(next)); } catch {}
+      return next;
     });
-    setSupportTicketsState(next);
-    try { localStorage.setItem('qaaf_support_tickets', JSON.stringify(next)); } catch {}
 
     try {
-      const ticket = supportTickets.find(item => item.id === ticketId);
       await updateDoc(doc(db, 'support_tickets', ticketId), {
         status: 'resolved',
         isOpen: false,
@@ -1393,7 +1462,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         queuePosition: 0,
         waitingCount: 0,
         updatedAt,
-        messages: [...(ticket?.messages || []), { id: `msg-${Date.now()}`, sender: 'system', text: note || (closedBy === 'customer' ? 'تم إغلاق المحادثة من العميل.' : closedBy === 'agent' ? 'تم إغلاق المحادثة من الموظف.' : 'تم إغلاق المحادثة.'), createdAt: new Date().toISOString() }]
+        messages: nextTicket.messages
       });
       await syncSupportTicketsFromRemote();
     } catch (e) {
