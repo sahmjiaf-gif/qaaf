@@ -337,6 +337,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } as SupportTicket;
   };
 
+  const mergeSupportTicketMessages = (...groups: Array<SupportMessage[] | undefined>) => {
+    const map = new Map<string, SupportMessage>();
+
+    groups.forEach(group => {
+      (group || []).forEach(message => {
+        if (!message) return;
+        const key = message.id || `${message.sender}:${message.text}:${message.createdAt}`;
+        const current = map.get(key);
+        if (!current || new Date(message.createdAt).getTime() >= new Date(current.createdAt).getTime()) {
+          map.set(key, message);
+        }
+      });
+    });
+
+    return [...map.values()].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  };
+
   const mergeSupportTickets = (current: SupportTicket[], incoming: SupportTicket[]) => {
     const map = new Map<string, SupportTicket>();
 
@@ -344,18 +361,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     incoming.forEach(ticket => {
       const existing = map.get(ticket.id);
       if (!existing) {
-        map.set(ticket.id, ticket);
+        map.set(ticket.id, { ...ticket, messages: mergeSupportTicketMessages(ticket.messages) });
         return;
       }
-
-      const mergedMessages = [...(existing.messages || []), ...(ticket.messages || [])];
-      const seen = new Set<string>();
-      const dedupedMessages = mergedMessages.filter(item => {
-        if (!item?.id) return false;
-        if (seen.has(item.id)) return false;
-        seen.add(item.id);
-        return true;
-      });
 
       const existingTime = new Date(existing.updatedAt || existing.createdAt).getTime();
       const incomingTime = new Date(ticket.updatedAt || ticket.createdAt).getTime();
@@ -365,7 +373,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ...existing,
         ...ticket,
         ...newest,
-        messages: dedupedMessages.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
+        messages: mergeSupportTicketMessages(existing.messages, ticket.messages),
         updatedAt: newest.updatedAt || existing.updatedAt || ticket.updatedAt,
       });
     });
@@ -397,12 +405,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const cleanPhone = (phone || '').replace(/\D/g, '');
     if (!cleanPhone) return null;
 
+    const candidatePhones = Array.from(new Set([
+      cleanPhone,
+      cleanPhone.startsWith('0') ? cleanPhone.replace(/^0/, '') : `0${cleanPhone}`,
+      cleanPhone.startsWith('966') ? cleanPhone.slice(3) : `966${cleanPhone}`
+    ].filter(Boolean)));
+
     try {
-      const q = query(collection(db, 'support_tickets'), where('phone', '==', cleanPhone));
+      const q = query(collection(db, 'support_tickets'), where('phone', 'in', candidatePhones.slice(0, 10)));
       const snapshot = await getDocs(q);
       const matches = snapshot.docs
         .map(doc => normalizeSupportTicket({ id: doc.id, ...doc.data() }))
-        .filter(ticket => !ticket.isClosed && ticket.phone === cleanPhone)
+        .filter(ticket => {
+          if (ticket.isClosed) return false;
+          const ticketPhone = (ticket.phone || '').replace(/\D/g, '');
+          return candidatePhones.includes(ticketPhone) || ticketPhone === cleanPhone || ticketPhone.includes(cleanPhone) || cleanPhone.includes(ticketPhone);
+        })
         .sort((a, b) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime());
 
       if (matches.length > 0) {
@@ -413,7 +431,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.warn('Failed to query existing support ticket by phone:', error);
     }
 
-    return supportTickets.find(ticket => ticket.phone === cleanPhone && !ticket.isClosed) || null;
+    try {
+      const snapshot = await getDocs(collection(db, 'support_tickets'));
+      const matches = snapshot.docs
+        .map(doc => normalizeSupportTicket({ id: doc.id, ...doc.data() }))
+        .filter(ticket => !ticket.isClosed)
+        .filter(ticket => {
+          const ticketPhone = (ticket.phone || '').replace(/\D/g, '');
+          return candidatePhones.includes(ticketPhone) || ticketPhone === cleanPhone || ticketPhone.includes(cleanPhone) || cleanPhone.includes(ticketPhone);
+        })
+        .sort((a, b) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime());
+
+      if (matches.length > 0) {
+        setSupportTicketsState(prev => mergeSupportTickets(prev, matches));
+        return matches[0];
+      }
+    } catch (error) {
+      console.warn('Failed to fallback query existing support ticket by phone:', error);
+    }
+
+    return supportTickets.find(ticket => {
+      const ticketPhone = (ticket.phone || '').replace(/\D/g, '');
+      return !ticket.isClosed && (candidatePhones.includes(ticketPhone) || ticketPhone === cleanPhone || ticketPhone.includes(cleanPhone) || cleanPhone.includes(ticketPhone));
+    }) || null;
   };
 
   const setIsLoggedIn = (val: boolean) => {
@@ -1192,22 +1232,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const existingTicket = cleanPhone ? await findExistingSupportTicketForPhone(cleanPhone) : null;
 
     if (existingTicket && !existingTicket.isClosed) {
+      const incomingMessages = (ticket.messages && ticket.messages.length > 0)
+        ? ticket.messages
+        : [{
+            id: `msg-${Date.now()}-customer`,
+            sender: 'customer',
+            text: ticket.message,
+            imageUrl: ticket.imageUrl,
+            createdAt: now
+          }];
+
       const mergedTicket = {
         ...existingTicket,
         message: ticket.message || existingTicket.message,
         imageUrl: ticket.imageUrl || existingTicket.imageUrl,
         updatedAt: now,
-        messages: [...(existingTicket.messages || []), ...((ticket.messages && ticket.messages.length > 0) ? ticket.messages : [{
-          id: `msg-${Date.now()}-customer`,
-          sender: 'customer',
-          text: ticket.message,
-          imageUrl: ticket.imageUrl,
-          createdAt: now
-        }])]
+        messages: mergeSupportTicketMessages(existingTicket.messages, incomingMessages)
       };
 
-      const dedupedMessages = Array.from(new Map((mergedTicket.messages || []).map(msg => [msg.id || `${msg.sender}:${msg.text}:${msg.createdAt}`, msg])).values());
-      const mergedDoc = { ...normalizeSupportTicket(mergedTicket), messages: dedupedMessages };
+      const mergedDoc = { ...normalizeSupportTicket(mergedTicket), messages: mergedTicket.messages };
 
       try {
         await setDoc(doc(db, 'support_tickets', existingTicket.id), {
@@ -1248,6 +1291,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       createdAt: now
     };
 
+    const systemMessages = buildSupportBotMessages(ticket.message, queueStatus);
     const supportTicket: SupportTicket = {
       id: `support-${Date.now()}`,
       customerName: ticket.customerName,
@@ -1268,7 +1312,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       availableStaffCount: queueStatus.availableStaff,
       createdAt: now,
       updatedAt: now,
-      messages: ticket.messages && ticket.messages.length > 0 ? ticket.messages : [customerMessage, ...buildSupportBotMessages(ticket.message, queueStatus)]
+      messages: mergeSupportTicketMessages(ticket.messages && ticket.messages.length > 0 ? ticket.messages : [customerMessage], systemMessages)
     };
 
     // Persist to Firestore for real-time sync
@@ -1321,8 +1365,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let nextStatus: SupportTicket['status'] = msg.sender === 'customer' ? 'waiting' : 'assigned';
     let nextBotStep: SupportTicket['botStep'] = ticket?.botStep || 'ask_shipping_fee';
     let nextCustomerIntent: SupportTicket['customerIntent'] = ticket?.customerIntent || 'general';
+    let systemMessages: SupportMessage[] = [];
     let updateData: Record<string, any> = {
-      messages: arrayUnion(msg),
       status: nextStatus,
       updatedAt: now,
       isOpen: true
@@ -1351,6 +1395,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           createdAt: now
         };
 
+        systemMessages = [queueMessage];
         updateData = {
           ...updateData,
           status: nextStatus,
@@ -1360,7 +1405,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           queuePosition: assigned ? 0 : Math.max(queueState.totalWaiting + 1, 1),
           waitingCount: Math.max(queueState.totalWaiting + 1, 1),
           availableStaffCount: queueState.availableStaff,
-          messages: arrayUnion(msg, queueMessage)
         };
       }
 
@@ -1374,34 +1418,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           createdAt: now
         };
 
+        systemMessages = [proofPrompt];
         updateData = {
           ...updateData,
           botStep: nextBotStep,
           customerIntent: nextCustomerIntent,
-          messages: arrayUnion(msg, proofPrompt)
         };
       }
     }
 
+    const mergedMessages = mergeSupportTicketMessages(ticket?.messages || [], [msg], systemMessages);
+    const persistedTicket = {
+      ...((ticket || normalizeSupportTicket({ id: ticketId }, ticketId))),
+      ...updateData,
+      updatedAt: now,
+      isOpen: true,
+      isClosed: false,
+      messages: mergedMessages,
+    };
+
     try {
-      await setDoc(ticketRef, {
-        ...((ticket || normalizeSupportTicket({ id: ticketId }, ticketId))),
-        ...updateData,
-        updatedAt: now,
-        isOpen: true,
-        isClosed: false,
-        messages: [...((ticket?.messages || []).filter(Boolean)), msg],
-      }, { merge: true });
-      const updatedTicket = {
-        ...(ticket || normalizeSupportTicket({ id: ticketId, ...((supportTickets.find(item => item.id === ticketId) || {})) }, ticketId)),
-        status: nextStatus,
-        botStep: nextBotStep,
-        customerIntent: nextCustomerIntent,
-        updatedAt: now,
-        messages: [...((ticket?.messages || []).filter(Boolean)), msg],
-      };
+      await setDoc(ticketRef, persistedTicket, { merge: true });
       setSupportTicketsState(prev => {
-        const next = mergeSupportTickets(prev, [updatedTicket]);
+        const next = mergeSupportTickets(prev, [persistedTicket]);
         try { localStorage.setItem('qaaf_support_tickets', JSON.stringify(next)); } catch {}
         return next;
       });
@@ -1410,12 +1449,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.error('Failed to write support message to remote DB:', e);
       const fallbackTicket = {
         ...(ticket || normalizeSupportTicket({ id: ticketId }, ticketId)),
-        isOpen: !ticket?.isClosed,
-        isClosed: !!ticket?.isClosed,
+        isOpen: true,
+        isClosed: false,
         status: nextStatus,
         botStep: nextBotStep,
         customerIntent: nextCustomerIntent,
-        messages: [...((ticket?.messages || [])), msg],
+        messages: mergeSupportTicketMessages(ticket?.messages || [], [msg], systemMessages),
         updatedAt: now,
       } as SupportTicket;
       setSupportTicketsState(prev => {
